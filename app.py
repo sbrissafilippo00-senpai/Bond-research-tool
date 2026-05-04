@@ -145,7 +145,12 @@ def scrape_borsa_italiana(isin):
                 elif any(x in label for x in ["lotto minimo","taglio minimo","minimum denomination"]):
                     if not result["taglio_minimo"]:
                         result["taglio_minimo"] = value
-                elif any(x in label for x in ["data di scadenza","data scadenza","maturity date","scadenza","data rimborso","rimborso"]):
+                elif (
+                    # Label ESATTO "scadenza" o "maturity date" — esclude esplicitamente
+                    # campi con date diverse: godimento, stacco cedola, inizio negoziazione, rimborso anticipato
+                    label.strip() in ("scadenza","maturity date","data di scadenza","data scadenza","data rimborso")
+                    or (label.strip() == "scadenza")
+                ) and not any(x in label for x in ["cedola","godimento","stacco","inizio","negoziaz","anticip","emissione"]):
                     if not result["data_rimborso"]:
                         result["data_rimborso"] = value
                         result["scadenza"] = value
@@ -393,6 +398,12 @@ def anni_alla_scadenza(data_str):
     delta = (d - date.today()).days
     return max(round(delta/365.25, 6), 0) if delta > 0 else None
 
+def format_date(data_str):
+    """Normalizza qualsiasi formato data a gg/mm/aaaa per la visualizzazione."""
+    d = parse_date(data_str)
+    if not d: return data_str or "N/D"
+    return d.strftime("%d/%m/%Y")
+
 def calc_ytm(prezzo, cedola_pct, anni, freq=2, face=100):
     if not prezzo or not cedola_pct or not anni or anni <= 0: return None
     try:
@@ -632,8 +643,8 @@ with tab_gov:
                  f"periodicità: {periodo_disp}")
             card("Taglio Minimo", bi.get("taglio_minimo") or "N/D", "lotto minimo acquistabile")
         with r1c:
-            card("Scadenza / Data Rimborso", scadenza_s or "N/D",
-                 f"anni residui: {anni_f:.2f}" if anni_f else "")
+            card("Scadenza / Data Rimborso", format_date(scadenza_s),
+                 f"anni residui: {round(anni_f,2)}" if anni_f else "")
             card("Mercato", bi.get("mercato") or "—", "piazza di quotazione")
 
         # S2: Rating & Macro
@@ -735,9 +746,9 @@ with tab_gov:
                 f"{bp:+.1f} bp" if bp is not None else "N/D",
                 f"{prezzo_f:.2f}" if prezzo_f else (bi.get("prezzo") or "N/D"),
                 divisa_f, bi.get("taglio_minimo") or "N/D",
-                scadenza_s or "N/D",
+                format_date(scadenza_s),
                 f"{cedola_f:.3f}%" if cedola_f else "N/D",
-                periodo_disp, scadenza_s or "N/D",
+                periodo_disp, format_date(scadenza_s),
                 dur_disp or "N/D", con_disp or "N/D",
                 f"{rend_lordo:.3f}%" if rend_lordo else "N/D",
                 f"{rend_netto:.3f}%" if rend_netto else "N/D",
@@ -852,8 +863,8 @@ with tab_corp:
             card("Tasso cedolare", cedola_clbl, f"periodicità: {periodo_cd}")
             card("Taglio Minimo", bi_c.get("taglio_minimo") or "N/D")
         with rc3:
-            card("Scadenza / Data Rimborso", scadenza_c or "N/D",
-                 f"anni residui: {anni_c:.2f}" if anni_c else "")
+            card("Scadenza / Data Rimborso", format_date(scadenza_c),
+                 f"anni residui: {round(anni_c,2)}" if anni_c else "")
             card("Seniority", corp_seniority)
             card("Mercato", bi_c.get("mercato") or "—")
 
@@ -906,8 +917,8 @@ with tab_corp:
                 f"{corp_leva:.2f}x" if corp_leva else "—",
                 f"{prezzo_c:.2f}" if prezzo_c else (bi_c.get("prezzo") or "N/D"),
                 divisa_c, bi_c.get("taglio_minimo") or "N/D",
-                scadenza_c or "N/D", cedola_clbl, periodo_cd,
-                scadenza_c or "N/D", corp_seniority,
+                format_date(scadenza_c), cedola_clbl, periodo_cd,
+                format_date(scadenza_c), corp_seniority,
                 dur_cd or "N/D", con_cd or "N/D",
                 f"{rl_c:.3f}%" if rl_c else "N/D",
                 f"{rn_c:.3f}%" if rn_c else "N/D",
