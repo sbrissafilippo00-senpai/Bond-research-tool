@@ -150,9 +150,12 @@ def scrape_borsa_italiana(isin):
                         result["scadenza"] = value
                 elif any(x in label for x in ["tasso cedola","cedola","coupon rate","tasso interesse","tasso nominale","tasso annuo","interest rate","coupon"]):
                     if not result["tasso_cedolare"]:
-                        m = re.search(r"(\d+[,.]?\d*)\s*%?", value)
+                        # % OBBLIGATORIO per evitare falsi positivi da altri campi numerici
+                        m = re.search(r"(\d+[,.]?\d*)\s*%", value)
                         if m:
-                            result["tasso_cedolare"] = m.group(1).replace(",",".")
+                            v = float(m.group(1).replace(",","."))
+                            if 0.001 <= v <= 25.0:  # range ragionevole per una cedola
+                                result["tasso_cedolare"] = str(v)
                 elif any(x in label for x in ["periodicità","periodicita","frequency","frequenza","stacco cedola"]):
                     if not result["periodicita"]:
                         result["periodicita"] = value
@@ -172,11 +175,13 @@ def scrape_borsa_italiana(isin):
                         result["prezzo"] = m.group(1)
                         break
 
-            # Fallback cedola dal nome titolo (es. "BTP Tf 4,5% Ot53")
+            # Fallback cedola dal nome titolo (es. "BTP Tf 4,5% Ot53", "Obligaciones Tf 4,9% Lg40")
             if not result["tasso_cedolare"] and result["descrizione"]:
-                m = re.search(r"(\d+[,.]?\d*)\s*%", result["descrizione"])
+                m = re.search(r"(\d+[,.]?\d+)\s*%", result["descrizione"])
                 if m:
-                    result["tasso_cedolare"] = m.group(1).replace(",",".")
+                    v = float(m.group(1).replace(",","."))
+                    if 0.001 <= v <= 25.0:  # range ragionevole
+                        result["tasso_cedolare"] = str(v)
 
             # Fallback periodicità: BTP/Bund/OAT/Bonos → semestrale
             if not result["periodicita"] and result["descrizione"]:
@@ -203,7 +208,7 @@ def scrape_borsa_italiana(isin):
                         result["scadenza"] = result["data_rimborso"]
 
             result["source_url"] = url
-            result["mercato"] = _extract_market(url)
+            result["mercato"] = _extract_market(url, isin[:2].upper() if len(isin)==12 else None)
             if result["descrizione"] or result["prezzo"]:
                 return result
 
@@ -215,14 +220,34 @@ def scrape_borsa_italiana(isin):
     return result
 
 
-def _extract_market(url):
-    if "mot/btp" in url:                   return "MOT - BTP"
-    if "mot/obbligazioni-in-euro" in url:  return "MOT - Obbligazioni EUR"
-    if "mot/obbligazioni-in-altre" in url: return "MOT - Obbligazioni altre valute"
-    if "euromot/obbligazioni-euro" in url: return "EuroMOT - EUR"
-    if "euromot/obbligazioni-altre" in url:return "EuroMOT - altre valute"
-    if "extramot" in url:                  return "ExtraMOT"
-    return "Borsa Italiana"
+# Libreria interna: nome strumento per paese ISIN
+STRUMENTO_LABEL = {
+    "DE": "Bund",
+    "IT": "BTP",
+    "ES": "Bonos",
+    "FR": "OAT",
+    "NL": "DSL",
+    "PL": "POLGB",
+    "RO": "ROMGB",
+    "XS": "Eurobond",
+}
+
+def _extract_market(url, isin_prefix=None):
+    """Mercato di quotazione con nome strumento corretto da libreria interna."""
+    if "mot/" in url:        segmento = "MOT"
+    elif "euromot/" in url:  segmento = "EuroMOT"
+    elif "extramot" in url:  segmento = "ExtraMOT"
+    else:                    return "Borsa Italiana"
+
+    # Nome strumento: libreria interna ha priorità sul path
+    if isin_prefix and isin_prefix in STRUMENTO_LABEL:
+        nome = STRUMENTO_LABEL[isin_prefix]
+    elif "obbligazioni-in-altre" in url: nome = "Obbligazioni altre valute"
+    elif "obbligazioni-in-euro" in url:  nome = "Obbligazioni EUR"
+    elif "obbligazioni-euro" in url:     nome = "Obbligazioni EUR"
+    else:                                nome = STRUMENTO_LABEL.get(isin_prefix, "Obbligazioni")
+
+    return f"{segmento} - {nome}"
 
 
 # ─────────────────────────────────────────────────────────────────
