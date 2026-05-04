@@ -102,6 +102,7 @@ def scrape_borsa_italiana(isin):
         "tasso_cedolare":None,"periodicita":None,
         "scadenza":None,"duration":None,"convexity":None,
         "mercato":None,"source_url":None,"error":None,
+        "_isin_prefix": isin[:2].upper() if len(isin)==12 else "",
     }
 
     for url in paths:
@@ -144,11 +145,11 @@ def scrape_borsa_italiana(isin):
                 elif any(x in label for x in ["lotto minimo","taglio minimo","minimum denomination"]):
                     if not result["taglio_minimo"]:
                         result["taglio_minimo"] = value
-                elif any(x in label for x in ["data di scadenza","data scadenza","maturity date","scadenza","rimborso"]):
+                elif any(x in label for x in ["data di scadenza","data scadenza","maturity date","scadenza","data rimborso","rimborso"]):
                     if not result["data_rimborso"]:
                         result["data_rimborso"] = value
                         result["scadenza"] = value
-                elif any(x in label for x in ["tasso cedola","cedola","coupon rate","tasso interesse","tasso nominale","tasso annuo","interest rate","coupon"]):
+                elif any(x in label for x in ["tasso cedola periodale","tasso cedola su base annua","tasso cedola","cedola","coupon rate","tasso interesse","tasso nominale","tasso annuo","interest rate","coupon"]):
                     if not result["tasso_cedolare"]:
                         # % OBBLIGATORIO per evitare falsi positivi da altri campi numerici
                         m = re.search(r"(\d+[,.]?\d*)\s*%", value)
@@ -156,7 +157,7 @@ def scrape_borsa_italiana(isin):
                             v = float(m.group(1).replace(",","."))
                             if 0.001 <= v <= 25.0:  # range ragionevole per una cedola
                                 result["tasso_cedolare"] = str(v)
-                elif any(x in label for x in ["periodicità","periodicita","frequency","frequenza","stacco cedola"]):
+                elif any(x in label for x in ["periodicità cedola","periodicita cedola","periodicità","periodicita","frequency","frequenza","stacco cedola"]):
                     if not result["periodicita"]:
                         result["periodicita"] = value
                 elif re.search(r"duration\s*(modif|mod\.?|modified)", label):
@@ -183,10 +184,12 @@ def scrape_borsa_italiana(isin):
                     if 0.001 <= v <= 25.0:  # range ragionevole
                         result["tasso_cedolare"] = str(v)
 
-            # Fallback periodicità: BTP/Bund/OAT/Bonos → semestrale
+            # Fallback periodicità: solo BTP/Bund/OAT/DSL → semestrale
+            # I Bonos spagnoli sono ANNUALI — non assumiamo mai semestrale per ES
             if not result["periodicita"] and result["descrizione"]:
                 desc_l = result["descrizione"].lower()
-                if any(x in desc_l for x in ["btp","bund","oat","bonos","dsl"]):
+                isin_prefix = result.get("_isin_prefix","")
+                if any(x in desc_l for x in ["btp","bund","oat","dsl"]) and isin_prefix != "ES":
                     result["periodicita"] = "Semestrale"
 
             # Fallback scadenza dal nome titolo (es. "Ot53" → 01/10/2053)
@@ -370,8 +373,17 @@ def parse_float(s):
 
 def parse_date(s):
     if not s: return None
-    for fmt in ("%d/%m/%Y","%Y-%m-%d","%d-%m-%Y","%d.%m.%Y","%d %b %Y","%d/%m/%y"):
-        try: return datetime.strptime(str(s).strip(), fmt).date()
+    s = str(s).strip()
+    # Gestione formato corto gg/mm/aa (es. "30/07/40" da Borsa Italiana)
+    # Python interpreta anni 00-68 come 2000-2068 e 69-99 come 1969-1999
+    # ma le obbligazioni hanno scadenze future → forziamo sempre 2000+
+    m_short = re.match(r"^(\d{1,2})/(\d{1,2})/(\d{2})$", s)
+    if m_short:
+        g, mo, a = m_short.group(1), m_short.group(2), int(m_short.group(3))
+        anno = 2000 + a  # sempre futuro per obbligazioni
+        s = f"{g}/{mo}/{anno}"
+    for fmt in ("%d/%m/%Y","%Y-%m-%d","%d-%m-%Y","%d.%m.%Y","%d %b %Y"):
+        try: return datetime.strptime(s, fmt).date()
         except: continue
     return None
 
