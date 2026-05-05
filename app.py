@@ -1180,9 +1180,20 @@ with tab_gov:
                      f"{macro['fx_reserves']:,.1f} MLD" if macro.get("fx_reserves") else "N/D",
                      f"rif. {macro['fx_ref']}", "#0f172a")
             with me4:
+                # Oro con valorizzazione dinamica al prezzo del trimestre precedente
+                with st.spinner("Prezzo oro..."):
+                    gp, gp_date, gp_q = get_gold_price_prev_quarter()
+                gold_t_val = macro.get("gold_t", 0)
+                gold_calc  = calc_gold_value_usd(gold_t_val, gp) if gp else None
+                if gold_calc:
+                    gold_sub = f"{gold_calc:,.2f} MLD USD ({gp_q} | ${gp:,.0f}/oz)"
+                    gold_col = "#22c55e"
+                else:
+                    gold_sub = f"≈ {macro['gold_usd']:.1f} MLD USD (libreria) | rif. {macro['gold_ref']}"
+                    gold_col = "#b45309"
                 card("Gold Reserve",
-                     f"{macro['gold_t']:,.2f} t",
-                     f"≈ {macro['gold_usd']:.1f} MLD USD  |  rif. {macro['gold_ref']}", "#b45309")
+                     f"{gold_t_val:,.2f} t",
+                     gold_sub, gold_col)
                 card("Area / Banca Centrale",
                      macro["area"],
                      macro["banca"], "#0f172a")
@@ -1297,35 +1308,6 @@ with tab_gov:
             unsafe_allow_html=True
         )
 
-        # ── ORO — valorizzazione al prezzo del trimestre precedente
-        section("Riserve Auree — Valorizzazione","🥇")
-        with st.spinner("Recupero prezzo oro trimestre precedente..."):
-            gold_price, gold_price_date, gold_q_label = get_gold_price_prev_quarter()
-
-        gold_t = macro.get("gold_t", 0)
-        gold_val_calc = calc_gold_value_usd(gold_t, gold_price) if gold_price else None
-
-        gc1, gc2, gc3 = st.columns(3)
-        with gc1:
-            card("Riserve Auree",
-                 f"{gold_t:,.2f} t",
-                 f"tonnellate metriche | rif. {macro.get('gold_ref','N/D')}",
-                 "#b45309")
-        with gc2:
-            card(f"Prezzo Oro ({gold_q_label or 'trim. prec.'})",
-                 f"${gold_price:,.2f}/oz" if gold_price else "N/D",
-                 f"Gold Fixing Price AM | rif. {gold_price_date or 'FRED'}",
-                 "#b45309")
-        with gc3:
-            card("Controvalore USD",
-                 f"{gold_val_calc:,.2f} MLD USD" if gold_val_calc else "N/D",
-                 f"tonnellate × {gold_price:,.0f} $/oz × 32.150 oz/t" if gold_price else "prezzo non disponibile",
-                 "#22c55e" if gold_val_calc else "#94a3b8")
-
-        if gold_val_calc and macro.get("gold_usd"):
-            delta = round(gold_val_calc - macro["gold_usd"], 2)
-            st.caption(f"ℹ️ Delta vs valore in libreria interna ({macro['gold_usd']} MLD USD): {delta:+.2f} MLD USD")
-
         # S4: Rendimento & Rischio
         section("Analisi Rendimento & Rischio","💹")
         col_tax, _ = st.columns([1,3])
@@ -1388,7 +1370,7 @@ with tab_gov:
                     except:
                         return ""
 
-                styled = df_sc.style.applymap(color_dp, subset=["ΔP (%)"]).format({
+                styled = df_sc.style.map(color_dp, subset=["ΔP (%)"]).format({
                     "Shift (bp)": lambda x: f"{x:+.0f} bp",
                     "Nuovo Prezzo": "{:.4f}",
                     "ΔP (abs)": "{:+.4f}",
