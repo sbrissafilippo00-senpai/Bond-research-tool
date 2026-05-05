@@ -694,116 +694,106 @@ ECB_YIELD_SERIES = {
 @st.cache_data(ttl=3600)
 def get_yield_curve(code):
     """
-    Recupera la curva dei tassi 2Y/5Y/10Y/30Y per un paese.
+    Recupera la curva dei tassi 3M/2Y/5Y/10Y/30Y per un paese.
 
-    Strategia:
-    - Eurozona (DE/IT/ES/FR/NL): ECB Data Portal — serie YC spot rate
-      per scadenza esatta (2/5/10/30 anni). URL:
-      https://data.ecb.europa.eu/data/datasets/YC/YC.B.U2.EUR.4F.G_N_A.SV_C_YM.SR_{N}Y
-      Queste sono le serie AAA euro area — rappresentano la curva risk-free.
-      Per ottenere il rendimento specifico per paese aggiungiamo lo spread
-      BTP-Bund / OAT-Bund / Bonos-Bund / DSL-Bund ai tassi AAA.
-    - PL: solo 10Y da FRED (IRLTLT01PLM156N)
-    - RO: nessuna serie disponibile → N/D
-
-    Ritorna dict {scadenza: (valore, data, note)}
+    Fonte 1: ECB SDW REST API (sdw-wsrest.ecb.europa.eu)
+             Serie AAA Euro Area per scadenza esatta.
+             Per paese: aggiunge spread paese vs Germania (dal 10Y FRED).
+    Fonte 2: FRED fallback per 10Y per paese.
+    Fonte 3: Dati statici di backup.
+    Ritorna dict {tenor: (valore, data, fonte)}
     """
-    result = {}
-
-    # ── Serie ECB YC (AAA Euro Area spot rates per scadenza)
-    # Formato: YC.B.U2.EUR.4F.G_N_A.SV_C_YM.SR_{maturity}Y
-    ECB_YC = {
-        "2Y":  "YC.B.U2.EUR.4F.G_N_A.SV_C_YM.SR_2Y",
-        "5Y":  "YC.B.U2.EUR.4F.G_N_A.SV_C_YM.SR_5Y",
-        "10Y": "YC.B.U2.EUR.4F.G_N_A.SV_C_YM.SR_10Y",
-        "30Y": "YC.B.U2.EUR.4F.G_N_A.SV_C_YM.SR_30Y",
+    # ── Serie ECB SDW: curva AAA Euro Area per scadenza
+    # Endpoint: sdw-wsrest.ecb.europa.eu/service/data/YC/{series}
+    ECB_SDW = {
+        "3M":  "B.U2.EUR.4F.G_N_A.SV_C_YM.SR_3M",
+        "2Y":  "B.U2.EUR.4F.G_N_A.SV_C_YM.SR_2Y",
+        "5Y":  "B.U2.EUR.4F.G_N_A.SV_C_YM.SR_5Y",
+        "10Y": "B.U2.EUR.4F.G_N_A.SV_C_YM.SR_10Y",
+        "30Y": "B.U2.EUR.4F.G_N_A.SV_C_YM.SR_30Y",
     }
 
-    # ── Serie FRED 10Y per paese (unica scadenza disponibile per paese)
+    # ── 10Y FRED per spread paese
     FRED_10Y = {
-        "DE": "IRLTLT01DEM156N",
-        "IT": "IRLTLT01ITM156N",
-        "ES": "IRLTLT01ESM156N",
-        "FR": "IRLTLT01FRM156N",
-        "NL": "IRLTLT01NLM156N",
-        "PL": "IRLTLT01PLM156N",
+        "DE": "IRLTLT01DEM156N", "IT": "IRLTLT01ITM156N",
+        "ES": "IRLTLT01ESM156N", "FR": "IRLTLT01FRM156N",
+        "NL": "IRLTLT01NLM156N", "PL": "IRLTLT01PLM156N",
         "RO": None,
     }
 
-    # ── Step 1: recupera curva AAA euro area da ECB
-    aaa_curve = {}
-    if code in ("DE","IT","ES","FR","NL"):
-        for tenor, ecb_series in ECB_YC.items():
+    result = {}
+    tenors = ["3M", "2Y", "5Y", "10Y", "30Y"]
+
+    if code in ("DE", "IT", "ES", "FR", "NL"):
+        # Step 1: recupera curva AAA da ECB SDW
+        aaa = {}
+        base_ecb = "https://sdw-wsrest.ecb.europa.eu/service/data/YC"
+        for tenor, series_id in ECB_SDW.items():
             try:
-                url = (f"https://data-api.ecb.europa.eu/service/data/{ecb_series}"
-                       f"?format=csvdata&lastNObservations=1&detail=dataonly")
-                r = requests.get(url, timeout=10, headers={"Accept":"text/csv"})
+                url = f"{base_ecb}/{series_id}?format=csvdata&lastNObservations=1&detail=dataonly"
+                r = requests.get(url, timeout=12,
+                    headers={"Accept":"text/csv","User-Agent":"Mozilla/5.0"})
                 if r.status_code == 200:
-                    lines = [l for l in r.text.strip().split("\n") if l and not l.startswith("KEY")]
+                    import re as _re
+                    lines = [l for l in r.text.strip().split("\n")
+                             if l and not l.upper().startswith(("KEY","SERIES"))]
                     for line in reversed(lines):
                         parts = [p.strip() for p in line.split(",")]
-                        # Cerca colonna con data (formato YYYY-MM-DD) e valore numerico
-                        date_val = None; num_val = None
+                        date_found = None
+                        val_found  = None
                         for p in parts:
-                            import re as _re
                             if _re.match(r"^\d{4}-\d{2}-\d{2}$", p):
-                                date_val = p
-                            try:
-                                fv = float(p)
-                                if 0.0 <= fv <= 20.0:
-                                    num_val = fv
-                            except:
-                                pass
-                        if num_val is not None:
-                            aaa_curve[tenor] = (round(num_val, 3), date_val or "ECB")
+                                date_found = p
+                            if val_found is None:
+                                try:
+                                    fv = float(p)
+                                    if -5.0 <= fv <= 25.0:
+                                        val_found = round(fv, 3)
+                                except:
+                                    pass
+                        if val_found is not None:
+                            aaa[tenor] = (val_found, date_found or "ECB")
                             break
             except:
                 pass
 
-    # ── Step 2: calcola spread paese vs Germania 10Y
-    # Per IT/ES/FR/NL aggiungiamo lo spread al tasso AAA per ottenere
-    # una stima per paese (approssimazione: spread uniforme su tutta la curva)
-    country_spread = 0.0
-    if code != "DE" and code in ("IT","ES","FR","NL"):
-        # Usa spread da Borsa Italiana o FRED già calcolato nella sezione spread
-        # Qui ricaviamo dal 10Y FRED paese vs 10Y FRED Germania
-        ctry_10y, _ = fred_latest(FRED_10Y.get(code))
-        bund_10y, _ = fred_latest(FRED_10Y["DE"])
-        if ctry_10y and bund_10y:
-            country_spread = round(ctry_10y - bund_10y, 4)
+        # Step 2: calcola spread paese (10Y FRED paese - 10Y FRED Bund)
+        spread = 0.0
+        if code != "DE":
+            bund_10y, _ = fred_latest(FRED_10Y["DE"])
+            ctry_10y, _ = fred_latest(FRED_10Y.get(code))
+            if bund_10y and ctry_10y:
+                spread = round(ctry_10y - bund_10y, 4)
 
-    # ── Step 3: componi curva finale
-    if code == "DE":
-        # Germania = curva AAA (è il benchmark)
-        for tenor in ("2Y","5Y","10Y","30Y"):
-            if tenor in aaa_curve:
-                v, d = aaa_curve[tenor]
-                result[tenor] = (v, d, "ECB AAA")
-            else:
-                result[tenor] = (None, None, "N/D")
-
-    elif code in ("IT","ES","FR","NL"):
-        # Altri paesi Eurozona: AAA + spread paese
-        for tenor in ("2Y","5Y","10Y","30Y"):
-            if tenor in aaa_curve:
-                aaa_v, d = aaa_curve[tenor]
-                country_v = round(aaa_v + country_spread, 3)
-                result[tenor] = (country_v, d, f"ECB AAA + spread {country_spread:+.3f}%")
+        # Step 3: componi curva per paese
+        for tenor in tenors:
+            if tenor in aaa:
+                v, d = aaa[tenor]
+                country_v = round(v + spread, 3)
+                src = "ECB AAA" if code == "DE" else f"ECB AAA+spread {spread:+.3f}%"
+                result[tenor] = (country_v, d, src)
             else:
                 result[tenor] = (None, None, "N/D su ECB")
 
-    elif code == "PL":
-        result["2Y"]  = (None, None, "N/D su FRED")
-        result["5Y"]  = (None, None, "N/D su FRED")
-        v10, d10 = fred_latest(FRED_10Y["PL"])
-        result["10Y"] = (round(v10, 3), d10, "FRED") if v10 else (None, None, "N/D")
-        result["30Y"] = (None, None, "N/D su FRED")
+        # Step 4: FRED override sul 10Y se ECB non disponibile
+        if result.get("10Y", (None,))[0] is None:
+            v10, d10 = fred_latest(FRED_10Y.get(code))
+            if v10:
+                result["10Y"] = (round(v10, 3), d10, "FRED 10Y")
 
-    elif code == "RO":
-        for tenor in ("2Y","5Y","10Y","30Y"):
-            result[tenor] = (None, None, "N/D")
+    elif code == "PL":
+        for t in tenors:
+            result[t] = (None, None, "N/D")
+        v10, d10 = fred_latest(FRED_10Y["PL"])
+        if v10:
+            result["10Y"] = (round(v10, 3), d10, "FRED")
+
+    else:  # RO
+        for t in tenors:
+            result[t] = (None, None, "N/D")
 
     return result
+
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -1229,57 +1219,124 @@ with tab_gov:
 
         # ── CURVA DEI TASSI
         section("Curva dei Tassi","📈")
-        st.caption(f"Rendimenti per scadenza — {macro['paese']} | Fonte: ECB / FRED live")
 
         with st.spinner("Recupero curva dei tassi..."):
             curve = get_yield_curve(code)
 
-        tenors = ["2Y", "5Y", "10Y", "30Y"]
-        cv_cols = st.columns(4)
+        tenors  = ["3M", "2Y", "5Y", "10Y", "30Y"]
+        labels  = ["3 Mesi", "2 Anni", "5 Anni", "10 Anni", "30 Anni"]
+        cv_cols = st.columns(5)
         curve_vals = []
-        for i, tenor in enumerate(tenors):
+        last_update = None
+
+        for i, (tenor, label) in enumerate(zip(tenors, labels)):
             entry = curve.get(tenor, (None, None, "N/D"))
             v    = entry[0] if len(entry) > 0 else None
             d    = entry[1] if len(entry) > 1 else None
             note = entry[2] if len(entry) > 2 else ""
+            if d and not last_update:
+                last_update = d
             with cv_cols[i]:
-                card(f"Rendimento {tenor}",
+                card(f"{tenor}",
                      f"{v:.3f}%" if v else "N/D",
-                     f"rif. {d}  |  {note}" if (d and note) else (note or "non disponibile"),
+                     label,
                      "#0ea5e9" if v else "#94a3b8")
             curve_vals.append(v)
 
-        # Grafico curva se almeno 2 punti disponibili
+        if last_update:
+            src_note = "ECB AAA Euro Area + spread paese" if code in ("IT","ES","FR","NL") else (
+                       "ECB AAA Euro Area" if code == "DE" else "FRED")
+            st.caption(f"Fonte: {src_note}  |  Ultimo aggiornamento: {last_update}")
+
+        # Grafico curva professionale (stile World Government Bonds)
         valid_pts = [(t, v) for t, v in zip(tenors, curve_vals) if v is not None]
         if len(valid_pts) >= 2:
+            # Determina colore: normale=blu, invertita (3M o 2Y > 10Y)=rosso
+            v2  = curve.get("2Y",  (None,))[0]
+            v3m = curve.get("3M",  (None,))[0]
+            v10 = curve.get("10Y", (None,))[0]
+            inverted = bool(v2 and v10 and v2 > v10) or bool(v3m and v10 and v3m > v10)
+            line_color  = "#ef4444" if inverted else "#0ea5e9"
+            fill_color  = "rgba(239,68,68,0.08)" if inverted else "rgba(14,165,233,0.08)"
+
             fig_cv = go.Figure()
+
+            # Area sotto la curva
+            fig_cv.add_trace(go.Scatter(
+                x=[p[0] for p in valid_pts],
+                y=[p[1] for p in valid_pts],
+                mode="none",
+                fill="tozeroy",
+                fillcolor=fill_color,
+                showlegend=False,
+                hoverinfo="skip",
+            ))
+
+            # Linea principale
             fig_cv.add_trace(go.Scatter(
                 x=[p[0] for p in valid_pts],
                 y=[p[1] for p in valid_pts],
                 mode="lines+markers+text",
                 text=[f"{p[1]:.3f}%" for p in valid_pts],
                 textposition="top center",
-                line=dict(color="#0ea5e9", width=2),
-                marker=dict(size=8, color="#0ea5e9"),
-                name="Rendimento"
+                textfont=dict(size=11, color=line_color),
+                line=dict(color=line_color, width=2.5),
+                marker=dict(size=7, color=line_color,
+                            line=dict(color="white", width=1.5)),
+                name=f"Yield curve {macro['paese']}",
+                hovertemplate="<b>%{x}</b><br>Rendimento: %{y:.3f}%<extra></extra>",
             ))
-            # Inversione: linea rossa se 2Y > 10Y
-            v2 = curve.get("2Y", (None,))[0]
-            v10 = curve.get("10Y", (None,))[0]
-            if v2 and v10 and v2 > v10:
+
+            # Annotazione inversione
+            if inverted:
                 fig_cv.add_annotation(
-                    text="⚠️ Curva invertita (2Y > 10Y)",
-                    xref="paper", yref="paper", x=0.5, y=1.12,
-                    showarrow=False, font=dict(color="#ef4444", size=12)
+                    text="⚠️ CURVA INVERTITA — segnale recessivo",
+                    xref="paper", yref="paper",
+                    x=0.5, y=1.08,
+                    showarrow=False,
+                    font=dict(color="#ef4444", size=12, family="sans-serif"),
+                    bgcolor="rgba(254,226,226,0.9)",
+                    bordercolor="#ef4444",
+                    borderwidth=1,
+                    borderpad=4,
                 )
-                fig_cv.update_traces(line_color="#ef4444", marker_color="#ef4444")
+
             fig_cv.update_layout(
-                height=280, margin=dict(t=40,b=20,l=40,r=20),
-                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
-                xaxis_title="Scadenza", yaxis_title="Rendimento (%)",
-                showlegend=False, font=dict(size=11),
+                title=dict(
+                    text=f"<b>{macro['paese'].upper()} YIELD CURVE</b>"
+                         f"<br><sup><i>{macro['strumento']} Government Bonds</i></sup>",
+                    x=0.5, xanchor="center",
+                    font=dict(size=15),
+                ),
+                height=360,
+                margin=dict(t=80, b=50, l=50, r=30),
+                plot_bgcolor="white",
+                paper_bgcolor="rgba(0,0,0,0)",
+                xaxis=dict(
+                    title="Scadenza (Residual Maturity)",
+                    showgrid=True,
+                    gridcolor="#f1f5f9",
+                    linecolor="#e2e8f0",
+                    tickfont=dict(size=11),
+                ),
+                yaxis=dict(
+                    title="Rendimento annualizzato (%)",
+                    showgrid=True,
+                    gridcolor="#f1f5f9",
+                    linecolor="#e2e8f0",
+                    tickformat=".2f",
+                    ticksuffix="%",
+                    tickfont=dict(size=11),
+                ),
+                showlegend=False,
+                hovermode="x unified",
+                font=dict(family="sans-serif"),
             )
             st.plotly_chart(fig_cv, use_container_width=True)
+        elif len(valid_pts) == 1:
+            st.info(f"ℹ️ Solo il dato 10Y disponibile per {macro['paese']} — dati multi-scadenza non disponibili su FRED/ECB.")
+        else:
+            st.warning(f"⚠️ Dati curva non disponibili per {macro['paese']}. Possibile causa: ECB/FRED irraggiungibili o paese non coperto.")
 
         # ── CDS SPREAD SOVRANO
         section("CDS Spread Sovrano","🛡️")
