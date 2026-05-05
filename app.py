@@ -602,50 +602,58 @@ def calc_accrued_interest(cedola_pct, freq, last_coupon_date=None, settlement_da
 @st.cache_data(ttl=86400)
 def get_gold_price_prev_quarter():
     """
-    Recupera il prezzo di chiusura dell'oro (USD/oz) del trimestre precedente.
-    Serie FRED: GOLDAMGBD228NLBM (Gold Fixing Price AM, USD per troy oz)
+    Recupera il prezzo di chiusura dell'oro (USD/oz) dell'ultimo giorno
+    lavorativo del trimestre precedente a quello corrente.
+
+    Fonti FRED (in ordine di priorità):
+      1. GOLDPMGBD228NLBM — London Gold Fixing PM (giornaliero, più stabile)
+      2. GOLDAMGBD228NLBM — London Gold Fixing AM (fallback)
     Ritorna (price, date_ref, quarter_label)
     """
-    try:
-        r = requests.get(
-            "https://fred.stlouisfed.org/graph/fredgraph.csv?id=GOLDAMGBD228NLBM",
-            timeout=12
-        )
-        r.raise_for_status()
-        lines = r.text.strip().split("\n")[1:]
+    today = date.today()
+    q = (today.month - 1) // 3   # trimestre corrente (0=Q1, 1=Q2, 2=Q3, 3=Q4)
 
-        today = date.today()
-        q = (today.month - 1) // 3  # trimestre corrente 0-3
-        # Ultimo giorno del trimestre precedente
-        if q == 0:
-            end_prev_q = date(today.year - 1, 12, 31)
-            q_label = f"Q4 {today.year-1}"
-        else:
-            end_month = q * 3
-            last_day = [0,31,28,31,30,31,30,31,31,30,31,30,31][end_month]
-            if end_month == 2 and (today.year % 4 == 0):
-                last_day = 29
-            end_prev_q = date(today.year, end_month, last_day)
-            q_label = f"Q{q} {today.year}"
+    if q == 0:
+        # Siamo in Q1 → trimestre precedente = Q4 dell'anno scorso
+        end_prev_q = date(today.year - 1, 12, 31)
+        q_label = f"Q4 {today.year - 1}"
+    else:
+        end_month = q * 3   # ultimo mese del trim. precedente
+        # Calcola ultimo giorno del mese correttamente
+        import calendar
+        last_day = calendar.monthrange(today.year, end_month)[1]
+        end_prev_q = date(today.year, end_month, last_day)
+        q_label = f"Q{q} {today.year}"
 
-        # Trova l'ultima quotazione disponibile entro fine trimestre precedente
-        best_price = None
-        best_date = None
-        for line in reversed(lines):
-            p = line.split(",")
-            if len(p) == 2 and p[1].strip() not in (".", ""):
-                try:
-                    d = datetime.strptime(p[0].strip(), "%Y-%m-%d").date()
-                    if d <= end_prev_q:
-                        best_price = float(p[1].strip())
-                        best_date  = d.strftime("%d/%m/%Y")
-                        break
-                except:
-                    continue
+    def fetch_gold_series(series_id):
+        """Scarica serie FRED e cerca l'ultima quotazione <= end_prev_q."""
+        try:
+            url = f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={series_id}"
+            r = requests.get(url, timeout=15,
+                             headers={"User-Agent": "Mozilla/5.0"})
+            if r.status_code != 200:
+                return None, None
+            lines = r.text.strip().split("\n")[1:]  # salta header
+            for line in reversed(lines):
+                p = line.strip().split(",")
+                if len(p) == 2 and p[1].strip() not in (".", "", "NA"):
+                    try:
+                        d_parsed = datetime.strptime(p[0].strip(), "%Y-%m-%d").date()
+                        if d_parsed <= end_prev_q:
+                            return float(p[1].strip()), d_parsed.strftime("%d/%m/%Y")
+                    except:
+                        continue
+        except:
+            pass
+        return None, None
 
-        return best_price, best_date, q_label
-    except:
-        return None, None, None
+    # Prova PM fixing prima, poi AM fixing
+    for series in ("GOLDPMGBD228NLBM", "GOLDAMGBD228NLBM"):
+        price, date_ref = fetch_gold_series(series)
+        if price and price > 100:   # sanity check: oro sempre > 100 USD/oz
+            return price, date_ref, q_label
+
+    return None, None, q_label
 
 
 def calc_gold_value_usd(gold_tonnes, gold_price_usd_oz):
@@ -687,71 +695,113 @@ ECB_YIELD_SERIES = {
 def get_yield_curve(code):
     """
     Recupera la curva dei tassi 2Y/5Y/10Y/30Y per un paese.
-    Usa FRED come fonte primaria, ECB API come fallback per Eurozona.
-    Ritorna dict {scadenza: (valore, data)}
+
+    Strategia:
+    - Eurozona (DE/IT/ES/FR/NL): ECB Data Portal — serie YC spot rate
+      per scadenza esatta (2/5/10/30 anni). URL:
+      https://data.ecb.europa.eu/data/datasets/YC/YC.B.U2.EUR.4F.G_N_A.SV_C_YM.SR_{N}Y
+      Queste sono le serie AAA euro area — rappresentano la curva risk-free.
+      Per ottenere il rendimento specifico per paese aggiungiamo lo spread
+      BTP-Bund / OAT-Bund / Bonos-Bund / DSL-Bund ai tassi AAA.
+    - PL: solo 10Y da FRED (IRLTLT01PLM156N)
+    - RO: nessuna serie disponibile → N/D
+
+    Ritorna dict {scadenza: (valore, data, note)}
     """
     result = {}
-    series_map = {
-        "2Y":  ("IRLTLT01{C}M156N", 2),
-        "5Y":  ("IRLTLT01{C}M156N", 5),
-        "10Y": ("IRLTLT01{C}M156N", 10),
-        "30Y": ("IRLTLT01{C}M156N", 30),
+
+    # ── Serie ECB YC (AAA Euro Area spot rates per scadenza)
+    # Formato: YC.B.U2.EUR.4F.G_N_A.SV_C_YM.SR_{maturity}Y
+    ECB_YC = {
+        "2Y":  "YC.B.U2.EUR.4F.G_N_A.SV_C_YM.SR_2Y",
+        "5Y":  "YC.B.U2.EUR.4F.G_N_A.SV_C_YM.SR_5Y",
+        "10Y": "YC.B.U2.EUR.4F.G_N_A.SV_C_YM.SR_10Y",
+        "30Y": "YC.B.U2.EUR.4F.G_N_A.SV_C_YM.SR_30Y",
     }
 
-    # Codici FRED per scadenze specifiche disponibili
-    fred_specific = {
-        "DE": {
-            "2Y":  "IRLTLT01DEM156N",
-            "5Y":  "IRLTLT01DEM156N",
-            "10Y": "IRLTLT01DEM156N",
-            "30Y": "IRLTLT01DEM156N",
-        },
-        "IT": {
-            "2Y":  "IRLTLT01ITM156N",
-            "5Y":  "IRLTLT01ITM156N",
-            "10Y": "IRLTLT01ITM156N",
-            "30Y": "IRLTLT01ITM156N",
-        },
-        "ES": {"2Y":"IRLTLT01ESM156N","5Y":"IRLTLT01ESM156N","10Y":"IRLTLT01ESM156N","30Y":None},
-        "FR": {"2Y":"IRLTLT01FRM156N","5Y":"IRLTLT01FRM156N","10Y":"IRLTLT01FRM156N","30Y":None},
-        "NL": {"2Y":"IRLTLT01NLM156N","5Y":"IRLTLT01NLM156N","10Y":"IRLTLT01NLM156N","30Y":None},
-        "PL": {"2Y":None,"5Y":None,"10Y":"IRLTLT01PLM156N","30Y":None},
-        "RO": {"2Y":None,"5Y":None,"10Y":None,"30Y":None},
+    # ── Serie FRED 10Y per paese (unica scadenza disponibile per paese)
+    FRED_10Y = {
+        "DE": "IRLTLT01DEM156N",
+        "IT": "IRLTLT01ITM156N",
+        "ES": "IRLTLT01ESM156N",
+        "FR": "IRLTLT01FRM156N",
+        "NL": "IRLTLT01NLM156N",
+        "PL": "IRLTLT01PLM156N",
+        "RO": None,
     }
 
-    # Prova ECB API per curve più precise (solo Eurozona)
-    ecb_countries = {"DE":"DE","IT":"IT","ES":"ES","FR":"FR","NL":"NL"}
-    if code in ecb_countries:
-        try:
-            for tenor, ecb_id in [
-                ("2Y",  f"FM.B.U2.EUR.4F.BB.U2_2Y.YLD"),
-                ("5Y",  f"FM.B.U2.EUR.4F.BB.U2_5Y.YLD"),
-                ("10Y", f"FM.B.U2.EUR.4F.BB.U2_10Y.YLD"),
-                ("30Y", f"FM.B.U2.EUR.4F.BB.U2_30Y.YLD"),
-            ]:
-                url = (f"https://data-api.ecb.europa.eu/service/data/{ecb_id}"
-                       f"?format=csvdata&lastNObservations=1")
-                r = requests.get(url, timeout=8)
+    # ── Step 1: recupera curva AAA euro area da ECB
+    aaa_curve = {}
+    if code in ("DE","IT","ES","FR","NL"):
+        for tenor, ecb_series in ECB_YC.items():
+            try:
+                url = (f"https://data-api.ecb.europa.eu/service/data/{ecb_series}"
+                       f"?format=csvdata&lastNObservations=1&detail=dataonly")
+                r = requests.get(url, timeout=10, headers={"Accept":"text/csv"})
                 if r.status_code == 200:
-                    for line in reversed(r.text.strip().split("\n")):
-                        parts = line.split(",")
-                        if len(parts) >= 2:
+                    lines = [l for l in r.text.strip().split("\n") if l and not l.startswith("KEY")]
+                    for line in reversed(lines):
+                        parts = [p.strip() for p in line.split(",")]
+                        # Cerca colonna con data (formato YYYY-MM-DD) e valore numerico
+                        date_val = None; num_val = None
+                        for p in parts:
+                            import re as _re
+                            if _re.match(r"^\d{4}-\d{2}-\d{2}$", p):
+                                date_val = p
                             try:
-                                v = float(parts[-1].strip())
-                                d = parts[-2].strip() if len(parts) > 2 else "ECB"
-                                result[tenor] = (round(v, 3), d)
-                                break
+                                fv = float(p)
+                                if 0.0 <= fv <= 20.0:
+                                    num_val = fv
                             except:
                                 pass
-        except:
-            pass
+                        if num_val is not None:
+                            aaa_curve[tenor] = (round(num_val, 3), date_val or "ECB")
+                            break
+            except:
+                pass
 
-    # FRED fallback per scadenze mancanti
-    series_for_code = fred_specific.get(code, {})
-    for tenor, sid in series_for_code.items():
-        if tenor not in result:
-            v, d = fred_latest(sid)
-            result[tenor] = (round(v, 3), d) if v else (None, None)
+    # ── Step 2: calcola spread paese vs Germania 10Y
+    # Per IT/ES/FR/NL aggiungiamo lo spread al tasso AAA per ottenere
+    # una stima per paese (approssimazione: spread uniforme su tutta la curva)
+    country_spread = 0.0
+    if code != "DE" and code in ("IT","ES","FR","NL"):
+        # Usa spread da Borsa Italiana o FRED già calcolato nella sezione spread
+        # Qui ricaviamo dal 10Y FRED paese vs 10Y FRED Germania
+        ctry_10y, _ = fred_latest(FRED_10Y.get(code))
+        bund_10y, _ = fred_latest(FRED_10Y["DE"])
+        if ctry_10y and bund_10y:
+            country_spread = round(ctry_10y - bund_10y, 4)
+
+    # ── Step 3: componi curva finale
+    if code == "DE":
+        # Germania = curva AAA (è il benchmark)
+        for tenor in ("2Y","5Y","10Y","30Y"):
+            if tenor in aaa_curve:
+                v, d = aaa_curve[tenor]
+                result[tenor] = (v, d, "ECB AAA")
+            else:
+                result[tenor] = (None, None, "N/D")
+
+    elif code in ("IT","ES","FR","NL"):
+        # Altri paesi Eurozona: AAA + spread paese
+        for tenor in ("2Y","5Y","10Y","30Y"):
+            if tenor in aaa_curve:
+                aaa_v, d = aaa_curve[tenor]
+                country_v = round(aaa_v + country_spread, 3)
+                result[tenor] = (country_v, d, f"ECB AAA + spread {country_spread:+.3f}%")
+            else:
+                result[tenor] = (None, None, "N/D su ECB")
+
+    elif code == "PL":
+        result["2Y"]  = (None, None, "N/D su FRED")
+        result["5Y"]  = (None, None, "N/D su FRED")
+        v10, d10 = fred_latest(FRED_10Y["PL"])
+        result["10Y"] = (round(v10, 3), d10, "FRED") if v10 else (None, None, "N/D")
+        result["30Y"] = (None, None, "N/D su FRED")
+
+    elif code == "RO":
+        for tenor in ("2Y","5Y","10Y","30Y"):
+            result[tenor] = (None, None, "N/D")
 
     return result
 
@@ -1177,11 +1227,14 @@ with tab_gov:
         cv_cols = st.columns(4)
         curve_vals = []
         for i, tenor in enumerate(tenors):
-            v, d = curve.get(tenor, (None, None))
+            entry = curve.get(tenor, (None, None, "N/D"))
+            v    = entry[0] if len(entry) > 0 else None
+            d    = entry[1] if len(entry) > 1 else None
+            note = entry[2] if len(entry) > 2 else ""
             with cv_cols[i]:
                 card(f"Rendimento {tenor}",
                      f"{v:.3f}%" if v else "N/D",
-                     f"rif. {d}" if d else "non disponibile su FRED/ECB",
+                     f"rif. {d}  |  {note}" if (d and note) else (note or "non disponibile"),
                      "#0ea5e9" if v else "#94a3b8")
             curve_vals.append(v)
 
@@ -1219,17 +1272,27 @@ with tab_gov:
 
         # ── CDS SPREAD SOVRANO
         section("CDS Spread Sovrano","🛡️")
-        cds_url = macro.get("cds_url", "https://www.worldgovernmentbonds.com/sovereign-cds/")
+        # Mappa paese italiano → nome inglese per World Government Bonds
+        CDS_COUNTRY_EN = {
+            "DE": "Germany",  "IT": "Italy",
+            "ES": "Spain",    "FR": "France",
+            "NL": "Netherlands","PL": "Poland","RO": "Romania",
+        }
+        cds_base = "https://www.worldgovernmentbonds.com/cds-historical-data/"
+        cds_country_en = CDS_COUNTRY_EN.get(code, macro["paese"])
         st.markdown(
             f'<div style="background:#f1f5f9;border-radius:10px;padding:14px 18px;'
             f'border-left:5px solid #6366f1;margin-bottom:12px;">'
-            f'<div style="font-size:10px;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:.08em;">CDS Spread Sovrano — {macro["paese"]}</div>'
+            f'<div style="font-size:10px;color:#64748b;font-weight:700;text-transform:uppercase;'
+            f'letter-spacing:.08em;">CDS Spread Sovrano — {macro["paese"]} ({cds_country_en})</div>'
             f'<div style="font-size:13px;color:#0f172a;margin-top:6px;">'
-            f'I dati CDS vengono aggiornati in tempo reale da <strong>World Government Bonds</strong> '
-            f'e richiedono una pagina interattiva non scrapabile automaticamente.</div>'
-            f'<a href="{cds_url}" target="_blank" style="display:inline-block;margin-top:10px;'
+            f'I dati CDS sono caricati in JavaScript dinamico e non scrapabili automaticamente.<br>'
+            f'Consulta la pagina storica su <strong>World Government Bonds</strong> e cerca '
+            f'<strong>{cds_country_en}</strong> nella tabella.</div>'
+            f'<a href="{cds_base}" target="_blank" style="display:inline-block;margin-top:10px;'
             f'background:#6366f1;color:white;font-size:12px;font-weight:600;padding:6px 14px;'
-            f'border-radius:6px;text-decoration:none;">🔗 Consulta CDS {macro["paese"]}</a>'
+            f'border-radius:6px;text-decoration:none;">'
+            f'🔗 CDS Historical Data — cerca: {cds_country_en}</a>'
             f'</div>',
             unsafe_allow_html=True
         )
