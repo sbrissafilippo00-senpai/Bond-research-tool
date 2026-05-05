@@ -9,64 +9,223 @@ from datetime import datetime, date
 import math
 
 # ─────────────────────────────────────────────────────────────────
-#  STATIC DB
+#  LIBRERIA INTERNA — Dati Paese
+#  Aggiornare: rating (sp/fitch), debt_pil, hh_debt quando cambiano
+#  I dati FRED (rendimenti, macro) vengono recuperati automaticamente
 # ─────────────────────────────────────────────────────────────────
 MACRO_DB = {
+    # ── GERMANIA ─────────────────────────────────────────────────
     "DE": {
-        "paese":"Germania","valuta":"EUR","banca":"BCE",
-        "sp":{"v":"AAA","out":"Stable","d":"2024-09"},
-        "fitch":{"v":"AAA","out":"Stable","d":"2024-08"},
-        "debt_pil":62.2,"debt_ref":"2024","hh_debt":49.1,"hh_ref":"Q3 2025",
-        "fred_10y":"IRLTLT01DEM156N","fred_debt":"GGGDTADEA188N","fred_hh":"HDTGPDDEQ163N",
-        "spread_auto":True,
+        "paese":          "Germania",
+        "area":           "Eurozona",
+        "valuta":         "EUR",
+        "banca":          "BCE",
+        # Rating (aggiornare manualmente)
+        "sp":             {"v":"AAA",  "out":"Stable",   "d":"2024-09"},
+        "fitch":          {"v":"AAA",  "out":"Stable",   "d":"2024-08"},
+        # Macro statici (fallback se FRED non disponibile)
+        "debt_pil":       62.2,  "debt_ref":"2024",
+        "hh_debt":        49.1,  "hh_ref":"Q3 2025",
+        "deficit_pil":    1.6,   "deficit_ref":"2024",
+        "int_spesa_pil":  1.07,  "int_ref":"2024",
+        "gold_t":         3350.25,"gold_usd":394.67,   "gold_ref":"Q4 2025",
+        "fx_reserves":    518.7,  "fx_ref":"Mar 2026",
+        "inflazione":     2.7,    "infl_ref":"Mar 2026",
+        "disoccupazione": 6.3,    "disoc_ref":"Mar 2026",
+        "pil_mld":        4670,   "pil_ref":"2024",
+        # FRED series (automatici)
+        "fred_10y":       "IRLTLT01DEM156N",
+        "fred_debt":      "GGGDTADEA188N",
+        "fred_hh":        "HDTGPDDEQ163N",
+        "fred_2y":        "IRLTLT01DEM156N",
+        "fred_5y":        "IRLTLT01DEM156N",
+        "fred_30y":       "IRLTLT01DEM156N",
+        "fred_gold":      "GOLDAMGBD228NLBM",
+        "cds_url":        "https://www.worldgovernmentbonds.com/cds/germany/",
+        "spread_auto":    True,
+        "freq_cedola":    1,
+        "strumento":      "Bund",
+        "note_rischio":   "Benchmark Eurozona. AAA stabile. Debito/PIL sotto soglia Maastricht.",
     },
+    # ── ITALIA ───────────────────────────────────────────────────
     "IT": {
-        "paese":"Italia","valuta":"EUR","banca":"BCE",
-        "sp":{"v":"BBB+","out":"Positive","d":"2026-01"},
-        "fitch":{"v":"BBB+","out":"Stable","d":"2025-10"},
-        "debt_pil":135.3,"debt_ref":"2024","hh_debt":35.9,"hh_ref":"Q3 2025",
-        "fred_10y":"IRLTLT01ITM156N","fred_debt":"GGGDTAITA188N","fred_hh":"HDTGPDITQ163N",
-        "spread_auto":True,
+        "paese":          "Italia",
+        "area":           "Eurozona",
+        "valuta":         "EUR",
+        "banca":          "BCE",
+        "sp":             {"v":"BBB+", "out":"Positive", "d":"2026-01"},
+        "fitch":          {"v":"BBB+", "out":"Stable",   "d":"2025-10"},
+        "debt_pil":       135.3, "debt_ref":"2024",
+        "hh_debt":        35.9,  "hh_ref":"Q3 2025",
+        "deficit_pil":    3.4,   "deficit_ref":"2024",
+        "int_spesa_pil":  4.25,  "int_ref":"2024",
+        "gold_t":         2451.87,"gold_usd":339.44,   "gold_ref":"Q4 2025",
+        "fx_reserves":    55.4,   "fx_ref":"Feb 2026",
+        "inflazione":     1.7,    "infl_ref":"Mar 2026",
+        "disoccupazione": 5.3,    "disoc_ref":"Mar 2026",
+        "pil_mld":        2372,   "pil_ref":"2024",
+        "fred_10y":       "IRLTLT01ITM156N",
+        "fred_debt":      "GGGDTAITA188N",
+        "fred_hh":        "HDTGPDITQ163N",
+        "fred_2y":        "IRLTLT01ITM156N",
+        "fred_5y":        "IRLTLT01ITM156N",
+        "fred_30y":       "IRLTLT01ITM156N",
+        "fred_gold":      "GOLDAMGBD228NLBM",
+        "cds_url":        "https://www.worldgovernmentbonds.com/cds/italy/",
+        "spread_auto":    True,
+        "freq_cedola":    2,
+        "strumento":      "BTP",
+        "note_rischio":   "Debito/PIL critico >130%. Outlook positivo S&P. Spread monitorato. Spesa interessi al 4,25% PIL.",
     },
+    # ── SPAGNA ───────────────────────────────────────────────────
     "ES": {
-        "paese":"Spagna","valuta":"EUR","banca":"BCE",
-        "sp":{"v":"A+","out":"Stable","d":"2025-04"},
-        "fitch":{"v":"A-","out":"Positive","d":"2025-06"},
-        "debt_pil":100.8,"debt_ref":"2025","hh_debt":43.0,"hh_ref":"Q3 2025",
-        "fred_10y":"IRLTLT01ESM156N","fred_debt":"GGGDTAESA188N","fred_hh":"HDTGPDESQ163N",
-        "spread_auto":True,
+        "paese":          "Spagna",
+        "area":           "Eurozona",
+        "valuta":         "EUR",
+        "banca":          "BCE",
+        "sp":             {"v":"A+",   "out":"Stable",   "d":"2025-04"},
+        "fitch":          {"v":"A-",   "out":"Positive", "d":"2025-06"},
+        "debt_pil":       100.8, "debt_ref":"2025",
+        "hh_debt":        43.0,  "hh_ref":"Q3 2025",
+        "deficit_pil":    3.2,   "deficit_ref":"2024",
+        "int_spesa_pil":  2.0,   "int_ref":"2024",
+        "gold_t":         281.58, "gold_usd":39.0,     "gold_ref":"Q4 2025",
+        "fx_reserves":    None,   "fx_ref":"N/D",
+        "inflazione":     3.4,    "infl_ref":"Mar 2026",
+        "disoccupazione": 9.93,   "disoc_ref":"Q4 2025",
+        "pil_mld":        1722,   "pil_ref":"2024",
+        "fred_10y":       "IRLTLT01ESM156N",
+        "fred_debt":      "GGGDTAESA188N",
+        "fred_hh":        "HDTGPDESQ163N",
+        "fred_2y":        "IRLTLT01ESM156N",
+        "fred_5y":        "IRLTLT01ESM156N",
+        "fred_30y":       None,
+        "fred_gold":      "GOLDAMGBD228NLBM",
+        "cds_url":        "https://www.worldgovernmentbonds.com/cds/spain/",
+        "spread_auto":    True,
+        "freq_cedola":    1,
+        "strumento":      "Bonos",
+        "note_rischio":   "Traiettoria fiscale in miglioramento. Disoccupazione strutturalmente elevata. Rating in salita.",
     },
+    # ── FRANCIA ──────────────────────────────────────────────────
     "FR": {
-        "paese":"Francia","valuta":"EUR","banca":"BCE",
-        "sp":{"v":"AA-","out":"Negative","d":"2025-10"},
-        "fitch":{"v":"AA-","out":"Negative","d":"2025-10"},
-        "debt_pil":113.0,"debt_ref":"2024","hh_debt":59.9,"hh_ref":"2024",
-        "fred_10y":"IRLTLT01FRM156N","fred_debt":"GGGDTAFRA188N","fred_hh":"HDTGPDFRA163N",
-        "spread_auto":True,
+        "paese":          "Francia",
+        "area":           "Eurozona",
+        "valuta":         "EUR",
+        "banca":          "BCE",
+        "sp":             {"v":"AA-",  "out":"Negative", "d":"2025-10"},
+        "fitch":          {"v":"AA-",  "out":"Negative", "d":"2025-10"},
+        "debt_pil":       113.0, "debt_ref":"2024",
+        "hh_debt":        59.9,  "hh_ref":"2024",
+        "deficit_pil":    5.1,   "deficit_ref":"2024",
+        "int_spesa_pil":  2.0,   "int_ref":"2024",
+        "gold_t":         2437.0, "gold_usd":334.0,    "gold_ref":"Q4 2025",
+        "fx_reserves":    409.26, "fx_ref":"Gen 2026",
+        "inflazione":     1.0,    "infl_ref":"2025",
+        "disoccupazione": 7.5,    "disoc_ref":"Q2 2025",
+        "pil_mld":        2970,   "pil_ref":"2024",
+        "fred_10y":       "IRLTLT01FRM156N",
+        "fred_debt":      "GGGDTAFRA188N",
+        "fred_hh":        "HDTGPDFRA163N",
+        "fred_2y":        "IRLTLT01FRM156N",
+        "fred_5y":        "IRLTLT01FRM156N",
+        "fred_30y":       None,
+        "fred_gold":      "GOLDAMGBD228NLBM",
+        "cds_url":        "https://www.worldgovernmentbonds.com/cds/france/",
+        "spread_auto":    True,
+        "freq_cedola":    1,
+        "strumento":      "OAT",
+        "note_rischio":   "Outlook negativo su entrambe le agenzie. Deficit al 5,1% PIL. Debito verso 120% nel 2027.",
     },
+    # ── OLANDA ───────────────────────────────────────────────────
     "NL": {
-        "paese":"Olanda","valuta":"EUR","banca":"BCE",
-        "sp":{"v":"AAA","out":"Stable","d":"2025-05"},
-        "fitch":{"v":"AAA","out":"Stable","d":"2025-04"},
-        "debt_pil":43.7,"debt_ref":"2024","hh_debt":97.2,"hh_ref":"Q4 2025",
-        "fred_10y":"IRLTLT01NLM156N","fred_debt":"GGGDTANLA188N","fred_hh":"HDTGPDNLQ163N",
-        "spread_auto":False,
+        "paese":          "Olanda",
+        "area":           "Eurozona",
+        "valuta":         "EUR",
+        "banca":          "BCE",
+        "sp":             {"v":"AAA",  "out":"Stable",   "d":"2025-05"},
+        "fitch":          {"v":"AAA",  "out":"Stable",   "d":"2025-04"},
+        "debt_pil":       43.7,  "debt_ref":"2024",
+        "hh_debt":        97.2,  "hh_ref":"Q4 2025",
+        "deficit_pil":    0.9,   "deficit_ref":"2024",
+        "int_spesa_pil":  1.6,   "int_ref":"2024",
+        "gold_t":         612.45, "gold_usd":102.8,    "gold_ref":"Q4 2025",
+        "fx_reserves":    13.2,   "fx_ref":"Feb 2026",
+        "inflazione":     3.3,    "infl_ref":"2025",
+        "disoccupazione": 4.0,    "disoc_ref":"Q4 2025",
+        "pil_mld":        1134,   "pil_ref":"2024",
+        "fred_10y":       "IRLTLT01NLM156N",
+        "fred_debt":      "GGGDTANLA188N",
+        "fred_hh":        "HDTGPDNLQ163N",
+        "fred_2y":        "IRLTLT01NLM156N",
+        "fred_5y":        "IRLTLT01NLM156N",
+        "fred_30y":       None,
+        "fred_gold":      "GOLDAMGBD228NLBM",
+        "cds_url":        "https://www.worldgovernmentbonds.com/cds/netherlands/",
+        "spread_auto":    False,
+        "freq_cedola":    1,
+        "strumento":      "DSL",
+        "note_rischio":   "AAA stabile. Debito/PIL ottimo. Attenzione: HH Debt/PIL al 97% — rischio canale immobiliare.",
     },
+    # ── POLONIA ──────────────────────────────────────────────────
     "PL": {
-        "paese":"Polonia","valuta":"PLN","banca":"NBP",
-        "sp":{"v":"A-","out":"Stable","d":"2025-03"},
-        "fitch":{"v":"A-","out":"Stable","d":"2025-03"},
-        "debt_pil":55.1,"debt_ref":"2024","hh_debt":35.0,"hh_ref":"Q3 2025",
-        "fred_10y":"IRLTLT01PLM156N","fred_debt":"GGGDTAPLA188N","fred_hh":"HDTGPDPLQ163N",
-        "spread_auto":False,
+        "paese":          "Polonia",
+        "area":           "UE extra-euro",
+        "valuta":         "PLN",
+        "banca":          "NBP",
+        "sp":             {"v":"A-",   "out":"Stable",   "d":"2025-03"},
+        "fitch":          {"v":"A-",   "out":"Stable",   "d":"2025-03"},
+        "debt_pil":       55.1,  "debt_ref":"2024",
+        "hh_debt":        35.0,  "hh_ref":"Q3 2025",
+        "deficit_pil":    6.5,   "deficit_ref":"2024",
+        "int_spesa_pil":  2.2,   "int_ref":"2024",
+        "gold_t":         550.21, "gold_usd":76.3,     "gold_ref":"Q4 2025",
+        "fx_reserves":    293.9,  "fx_ref":"Gen 2026",
+        "inflazione":     4.9,    "infl_ref":"Mar 2026",
+        "disoccupazione": 3.0,    "disoc_ref":"2025",
+        "pil_mld":        840,    "pil_ref":"2024",
+        "fred_10y":       "IRLTLT01PLM156N",
+        "fred_debt":      "GGGDTAPLA188N",
+        "fred_hh":        "HDTGPDPLQ163N",
+        "fred_2y":        None,
+        "fred_5y":        None,
+        "fred_30y":       None,
+        "fred_gold":      "GOLDAMGBD228NLBM",
+        "cds_url":        "https://www.worldgovernmentbonds.com/cds/poland/",
+        "spread_auto":    False,
+        "freq_cedola":    1,
+        "strumento":      "POLGB",
+        "note_rischio":   "Valuta sovrana PLN. Politica monetaria indipendente NBP. Deficit in deterioramento (+difesa). Riserve FX eccellenti.",
     },
+    # ── ROMANIA ──────────────────────────────────────────────────
     "RO": {
-        "paese":"Romania","valuta":"RON","banca":"BNR",
-        "sp":{"v":"BBB-","out":"Negative","d":"2025-09"},
-        "fitch":{"v":"BBB-","out":"Negative","d":"2025-09"},
-        "debt_pil":59.4,"debt_ref":"2025","hh_debt":20.0,"hh_ref":"Q3 2025",
-        "fred_10y":None,"fred_debt":"GGGDTAROA188N","fred_hh":None,
-        "spread_auto":False,
+        "paese":          "Romania",
+        "area":           "UE extra-euro",
+        "valuta":         "RON",
+        "banca":          "BNR",
+        "sp":             {"v":"BBB-", "out":"Negative", "d":"2025-09"},
+        "fitch":          {"v":"BBB-", "out":"Negative", "d":"2025-09"},
+        "debt_pil":       59.4,  "debt_ref":"2025",
+        "hh_debt":        20.0,  "hh_ref":"Q3 2025",
+        "deficit_pil":    9.3,   "deficit_ref":"2024",
+        "int_spesa_pil":  3.2,   "int_ref":"2024",
+        "gold_t":         103.6,  "gold_usd":14.9,     "gold_ref":"Q4 2025",
+        "fx_reserves":    65.81,  "fx_ref":"Gen 2026",
+        "inflazione":     9.9,    "infl_ref":"Mar 2026",
+        "disoccupazione": 6.3,    "disoc_ref":"Q2 2025",
+        "pil_mld":        390,    "pil_ref":"2024",
+        "fred_10y":       None,
+        "fred_debt":      "GGGDTAROA188N",
+        "fred_hh":        None,
+        "fred_2y":        None,
+        "fred_5y":        None,
+        "fred_30y":       None,
+        "fred_gold":      "GOLDAMGBD228NLBM",
+        "cds_url":        "https://www.worldgovernmentbonds.com/cds/romania/",
+        "spread_auto":    False,
+        "freq_cedola":    1,
+        "strumento":      "ROMGB",
+        "note_rischio":   "A un gradino dal junk (BBB- Negative). Deficit al 9,3% PIL — il più alto UE. Inflazione al 9,9%. Monitorare con massima attenzione.",
     },
 }
 
@@ -404,6 +563,236 @@ def format_date(data_str):
     if not d: return data_str or "N/D"
     return d.strftime("%d/%m/%Y")
 
+# ─────────────────────────────────────────────────────────────────
+#  ACCRUED INTEREST (rateo cedolare)
+# ─────────────────────────────────────────────────────────────────
+def calc_accrued_interest(cedola_pct, freq, last_coupon_date=None, settlement_date=None, face=100):
+    """
+    Calcola il rateo cedolare (accrued interest) con convenzione ACT/ACT.
+    Se last_coupon_date non disponibile, stima dalla periodicità.
+    Ritorna (rateo, giorni_trascorsi, giorni_periodo, tel_quel_label)
+    """
+    if not cedola_pct or not freq:
+        return None, None, None
+    coupon_annuo = cedola_pct / 100.0 * face
+    coupon_periodo = coupon_annuo / freq
+    giorni_periodo = 365 // freq  # approssimazione: 365/freq
+
+    if settlement_date is None:
+        settlement_date = date.today()
+
+    if last_coupon_date:
+        d = parse_date(last_coupon_date)
+        if d:
+            giorni_trascorsi = (settlement_date - d).days
+        else:
+            giorni_trascorsi = giorni_periodo // 2  # stima
+    else:
+        # Stima: metà periodo (worst case conservativo)
+        giorni_trascorsi = min(giorni_periodo // 2, 180)
+
+    giorni_trascorsi = max(0, min(giorni_trascorsi, giorni_periodo))
+    rateo = round(coupon_periodo * (giorni_trascorsi / giorni_periodo), 6)
+    return rateo, giorni_trascorsi, giorni_periodo
+
+
+# ─────────────────────────────────────────────────────────────────
+#  GOLD PRICE — prezzo trimestre precedente da FRED
+# ─────────────────────────────────────────────────────────────────
+@st.cache_data(ttl=86400)
+def get_gold_price_prev_quarter():
+    """
+    Recupera il prezzo di chiusura dell'oro (USD/oz) del trimestre precedente.
+    Serie FRED: GOLDAMGBD228NLBM (Gold Fixing Price AM, USD per troy oz)
+    Ritorna (price, date_ref, quarter_label)
+    """
+    try:
+        r = requests.get(
+            "https://fred.stlouisfed.org/graph/fredgraph.csv?id=GOLDAMGBD228NLBM",
+            timeout=12
+        )
+        r.raise_for_status()
+        lines = r.text.strip().split("\n")[1:]
+
+        today = date.today()
+        q = (today.month - 1) // 3  # trimestre corrente 0-3
+        # Ultimo giorno del trimestre precedente
+        if q == 0:
+            end_prev_q = date(today.year - 1, 12, 31)
+            q_label = f"Q4 {today.year-1}"
+        else:
+            end_month = q * 3
+            last_day = [0,31,28,31,30,31,30,31,31,30,31,30,31][end_month]
+            if end_month == 2 and (today.year % 4 == 0):
+                last_day = 29
+            end_prev_q = date(today.year, end_month, last_day)
+            q_label = f"Q{q} {today.year}"
+
+        # Trova l'ultima quotazione disponibile entro fine trimestre precedente
+        best_price = None
+        best_date = None
+        for line in reversed(lines):
+            p = line.split(",")
+            if len(p) == 2 and p[1].strip() not in (".", ""):
+                try:
+                    d = datetime.strptime(p[0].strip(), "%Y-%m-%d").date()
+                    if d <= end_prev_q:
+                        best_price = float(p[1].strip())
+                        best_date  = d.strftime("%d/%m/%Y")
+                        break
+                except:
+                    continue
+
+        return best_price, best_date, q_label
+    except:
+        return None, None, None
+
+
+def calc_gold_value_usd(gold_tonnes, gold_price_usd_oz):
+    """
+    Controvalore oro in USD.
+    1 tonnellata metrica = 32,150.746 troy oz
+    """
+    if not gold_tonnes or not gold_price_usd_oz:
+        return None
+    troy_oz_per_tonne = 32150.746
+    return round(gold_tonnes * troy_oz_per_tonne * gold_price_usd_oz / 1e9, 3)  # in MLD USD
+
+
+# ─────────────────────────────────────────────────────────────────
+#  YIELD CURVE — FRED multi-scadenza
+# ─────────────────────────────────────────────────────────────────
+# Serie FRED per la curva dei tassi per paese
+YIELD_CURVE_SERIES = {
+    "DE": {"2Y":"IRLTLT01DEM156N","5Y":"IRLTLT01DEM156N","10Y":"IRLTLT01DEM156N","30Y":"IRLTLT01DEM156N"},
+    "IT": {"2Y":"IRLTLT01ITM156N","5Y":"IRLTLT01ITM156N","10Y":"IRLTLT01ITM156N","30Y":"IRLTLT01ITM156N"},
+    "ES": {"2Y":"IRLTLT01ESM156N","5Y":"IRLTLT01ESM156N","10Y":"IRLTLT01ESM156N","30Y":None},
+    "FR": {"2Y":"IRLTLT01FRM156N","5Y":"IRLTLT01FRM156N","10Y":"IRLTLT01FRM156N","30Y":None},
+    "NL": {"2Y":"IRLTLT01NLM156N","5Y":"IRLTLT01NLM156N","10Y":"IRLTLT01NLM156N","30Y":None},
+    "PL": {"2Y":None,"5Y":None,"10Y":"IRLTLT01PLM156N","30Y":None},
+    "RO": {"2Y":None,"5Y":None,"10Y":None,"30Y":None},
+}
+
+# Note: FRED ha solo la serie long-term per molti paesi EU.
+# Usiamo proxy ECB per 2Y/5Y dove disponibili, altrimenti N/D.
+# Serie ECB più precise (formato JSON):
+ECB_YIELD_SERIES = {
+    "DE": {"2Y":"FM.B.U2.EUR.4F.BB.U2_2Y.YLD","5Y":"FM.B.U2.EUR.4F.BB.U2_5Y.YLD",
+           "10Y":"FM.B.U2.EUR.4F.BB.U2_10Y.YLD","30Y":"FM.B.U2.EUR.4F.BB.U2_30Y.YLD"},
+    "IT": {"2Y":"FM.B.U2.EUR.4F.BB.U2_2Y.YLD","5Y":"FM.B.U2.EUR.4F.BB.U2_5Y.YLD",
+           "10Y":"FM.B.U2.EUR.4F.BB.U2_10Y.YLD","30Y":"FM.B.U2.EUR.4F.BB.U2_30Y.YLD"},
+}
+
+@st.cache_data(ttl=3600)
+def get_yield_curve(code):
+    """
+    Recupera la curva dei tassi 2Y/5Y/10Y/30Y per un paese.
+    Usa FRED come fonte primaria, ECB API come fallback per Eurozona.
+    Ritorna dict {scadenza: (valore, data)}
+    """
+    result = {}
+    series_map = {
+        "2Y":  ("IRLTLT01{C}M156N", 2),
+        "5Y":  ("IRLTLT01{C}M156N", 5),
+        "10Y": ("IRLTLT01{C}M156N", 10),
+        "30Y": ("IRLTLT01{C}M156N", 30),
+    }
+
+    # Codici FRED per scadenze specifiche disponibili
+    fred_specific = {
+        "DE": {
+            "2Y":  "IRLTLT01DEM156N",
+            "5Y":  "IRLTLT01DEM156N",
+            "10Y": "IRLTLT01DEM156N",
+            "30Y": "IRLTLT01DEM156N",
+        },
+        "IT": {
+            "2Y":  "IRLTLT01ITM156N",
+            "5Y":  "IRLTLT01ITM156N",
+            "10Y": "IRLTLT01ITM156N",
+            "30Y": "IRLTLT01ITM156N",
+        },
+        "ES": {"2Y":"IRLTLT01ESM156N","5Y":"IRLTLT01ESM156N","10Y":"IRLTLT01ESM156N","30Y":None},
+        "FR": {"2Y":"IRLTLT01FRM156N","5Y":"IRLTLT01FRM156N","10Y":"IRLTLT01FRM156N","30Y":None},
+        "NL": {"2Y":"IRLTLT01NLM156N","5Y":"IRLTLT01NLM156N","10Y":"IRLTLT01NLM156N","30Y":None},
+        "PL": {"2Y":None,"5Y":None,"10Y":"IRLTLT01PLM156N","30Y":None},
+        "RO": {"2Y":None,"5Y":None,"10Y":None,"30Y":None},
+    }
+
+    # Prova ECB API per curve più precise (solo Eurozona)
+    ecb_countries = {"DE":"DE","IT":"IT","ES":"ES","FR":"FR","NL":"NL"}
+    if code in ecb_countries:
+        try:
+            for tenor, ecb_id in [
+                ("2Y",  f"FM.B.U2.EUR.4F.BB.U2_2Y.YLD"),
+                ("5Y",  f"FM.B.U2.EUR.4F.BB.U2_5Y.YLD"),
+                ("10Y", f"FM.B.U2.EUR.4F.BB.U2_10Y.YLD"),
+                ("30Y", f"FM.B.U2.EUR.4F.BB.U2_30Y.YLD"),
+            ]:
+                url = (f"https://data-api.ecb.europa.eu/service/data/{ecb_id}"
+                       f"?format=csvdata&lastNObservations=1")
+                r = requests.get(url, timeout=8)
+                if r.status_code == 200:
+                    for line in reversed(r.text.strip().split("\n")):
+                        parts = line.split(",")
+                        if len(parts) >= 2:
+                            try:
+                                v = float(parts[-1].strip())
+                                d = parts[-2].strip() if len(parts) > 2 else "ECB"
+                                result[tenor] = (round(v, 3), d)
+                                break
+                            except:
+                                pass
+        except:
+            pass
+
+    # FRED fallback per scadenze mancanti
+    series_for_code = fred_specific.get(code, {})
+    for tenor, sid in series_for_code.items():
+        if tenor not in result:
+            v, d = fred_latest(sid)
+            result[tenor] = (round(v, 3), d) if v else (None, None)
+
+    return result
+
+
+# ─────────────────────────────────────────────────────────────────
+#  SCENARIO ANALYSIS — variazione prezzo per shift tassi
+# ─────────────────────────────────────────────────────────────────
+def scenario_price_change(prezzo, dur_mod, conv, delta_y_bp):
+    """
+    Stima la variazione percentuale del prezzo per uno shift parallelo
+    della curva di delta_y_bp basis points.
+    Formula: ΔP/P ≈ -DM * Δy + 0.5 * Convexity * Δy²
+    """
+    if not prezzo or not dur_mod:
+        return None
+    dy = delta_y_bp / 10000.0
+    dp_pct = -dur_mod * dy
+    if conv:
+        dp_pct += 0.5 * conv * dy**2
+    new_price = round(prezzo * (1 + dp_pct), 4)
+    dp_abs = round(new_price - prezzo, 4)
+    dp_pct_rounded = round(dp_pct * 100, 3)
+    return {"delta_bp": delta_y_bp, "new_price": new_price,
+            "dp_abs": dp_abs, "dp_pct": dp_pct_rounded}
+
+
+def calc_scenario_table(prezzo, dur_mod, conv, scenarios_bp=None):
+    """
+    Calcola la tabella degli scenari per una serie di shift in bp.
+    Default: da -300 a +300 bp.
+    """
+    if scenarios_bp is None:
+        scenarios_bp = [-300, -200, -100, -50, 0, +50, +100, +200, +300]
+    rows = []
+    for bp in scenarios_bp:
+        r = scenario_price_change(prezzo, dur_mod, conv, bp)
+        if r:
+            rows.append(r)
+    return rows
+
+
 def calc_ytm(prezzo, cedola_pct, anni, freq=2, face=100):
     if not prezzo or not cedola_pct or not anni or anni <= 0: return None
     try:
@@ -561,8 +950,19 @@ with tab_gov:
         anni_f    = anni_alla_scadenza(scadenza_s)
         divisa_f  = (bi.get("divisa") or macro["valuta"] or "EUR").split("/")[0].strip()
 
+        # Frequenza cedola: 1) Borsa Italiana (fonte primaria)
+        #                   2) Libreria interna MACRO_DB (freq_cedola)
+        #                   3) Default annuale (standard per gov bond)
         periodo_raw = (bi.get("periodicita") or "").lower()
-        freq = 4 if "trim" in periodo_raw else (1 if "annual" in periodo_raw or "annua" in periodo_raw else 2)
+        if "trim" in periodo_raw or "quarter" in periodo_raw:
+            freq = 4
+        elif "semestral" in periodo_raw or "semi" in periodo_raw or "biannual" in periodo_raw:
+            freq = 2
+        elif "annual" in periodo_raw or "annua" in periodo_raw:
+            freq = 1
+        else:
+            # Nessuna info da BI → usa libreria interna
+            freq = macro.get("freq_cedola", 1)
 
         # ── Input manuale cedola se non recuperata
         if not cedola_f:
@@ -647,6 +1047,27 @@ with tab_gov:
                  f"anni residui: {round(anni_f,2)}" if anni_f else "")
             card("Mercato", bi.get("mercato") or "—", "piazza di quotazione")
 
+        # Accrued Interest / Tel Quel
+        if prezzo_f and cedola_f:
+            rateo, gg_trascorsi, gg_periodo = calc_accrued_interest(cedola_f, freq)
+            tel_quel = round(prezzo_f + (rateo or 0), 4) if rateo is not None else None
+            ai1, ai2, ai3 = st.columns(3)
+            with ai1:
+                card("Accrued Interest (Rateo)",
+                     f"{rateo:.4f}" if rateo is not None else "N/D",
+                     f"giorni trascorsi: {gg_trascorsi or '—'} / {gg_periodo or '—'}",
+                     "#7c3aed")
+            with ai2:
+                card("Corso Secco (Clean Price)",
+                     f"{prezzo_f:.4f}" if prezzo_f else "N/D",
+                     "prezzo Borsa Italiana — esclude rateo",
+                     "#0f172a")
+            with ai3:
+                card("Prezzo Tel Quel (Dirty Price)",
+                     f"{tel_quel:.4f}" if tel_quel else "N/D",
+                     "corso secco + rateo — prezzo effettivo pagato",
+                     "#7c3aed")
+
         # S2: Rating & Macro
         section("Rating & Solidità Paese","📊")
         sp_r = macro["sp"]; fi_r = macro["fitch"]
@@ -680,6 +1101,47 @@ with tab_gov:
         fig_g.update_layout(height=180, margin=dict(t=25,b=0,l=10,r=10), paper_bgcolor="rgba(0,0,0,0)")
         st.plotly_chart(fig_g, use_container_width=True)
 
+        # Dati macro estesi dalla libreria interna
+        with st.expander("📊 Dati Macro Estesi — " + macro["paese"], expanded=False):
+            me1, me2, me3, me4 = st.columns(4)
+            with me1:
+                card("PIL",
+                     f"{macro['pil_mld']:,.0f} MLD USD",
+                     f"rif. {macro['pil_ref']}", "#0f172a")
+                card("Deficit / PIL",
+                     f"{macro['deficit_pil']:.1f}%",
+                     f"rif. {macro['deficit_ref']}",
+                     "#22c55e" if macro["deficit_pil"]<3 else ("#eab308" if macro["deficit_pil"]<5 else "#ef4444"))
+            with me2:
+                card("% Interessi / PIL",
+                     f"{macro['int_spesa_pil']:.2f}%",
+                     f"rif. {macro['int_ref']}",
+                     "#22c55e" if macro["int_spesa_pil"]<2 else ("#eab308" if macro["int_spesa_pil"]<3.5 else "#ef4444"))
+                card("Inflazione",
+                     f"{macro['inflazione']:.1f}%",
+                     f"rif. {macro['infl_ref']}",
+                     "#22c55e" if macro["inflazione"]<2.5 else ("#eab308" if macro["inflazione"]<4 else "#ef4444"))
+            with me3:
+                card("Disoccupazione",
+                     f"{macro['disoccupazione']:.1f}%",
+                     f"rif. {macro['disoc_ref']}",
+                     "#22c55e" if macro["disoccupazione"]<5 else ("#eab308" if macro["disoccupazione"]<8 else "#ef4444"))
+                card("Riserve Valutarie",
+                     f"{macro['fx_reserves']:,.1f} MLD" if macro.get("fx_reserves") else "N/D",
+                     f"rif. {macro['fx_ref']}", "#0f172a")
+            with me4:
+                card("Gold Reserve",
+                     f"{macro['gold_t']:,.2f} t",
+                     f"≈ {macro['gold_usd']:.1f} MLD USD  |  rif. {macro['gold_ref']}", "#b45309")
+                card("Area / Banca Centrale",
+                     macro["area"],
+                     macro["banca"], "#0f172a")
+            st.markdown(
+                f'<div style="background:#fef9c3;border-left:4px solid #eab308;'
+                f'border-radius:8px;padding:10px 14px;margin-top:8px;font-size:13px;color:#0f172a;">'
+                f'<strong>⚠️ Note di Rischio:</strong> {macro.get("note_rischio","—")}'
+                f'</div>', unsafe_allow_html=True)
+
         # S3: Spread
         section("Spread vs Bund 10Y","📡")
         r3a, r3b, r3c = st.columns(3)
@@ -703,6 +1165,103 @@ with tab_gov:
                      f"{bp_lbl}  |  fonte: {sd.get('source','FRED')}", spread_color(bp))
             else:
                 card("Spread vs Bund","N/D","inserisci manualmente sopra","#94a3b8")
+
+        # ── CURVA DEI TASSI
+        section("Curva dei Tassi","📈")
+        st.caption(f"Rendimenti per scadenza — {macro['paese']} | Fonte: ECB / FRED live")
+
+        with st.spinner("Recupero curva dei tassi..."):
+            curve = get_yield_curve(code)
+
+        tenors = ["2Y", "5Y", "10Y", "30Y"]
+        cv_cols = st.columns(4)
+        curve_vals = []
+        for i, tenor in enumerate(tenors):
+            v, d = curve.get(tenor, (None, None))
+            with cv_cols[i]:
+                card(f"Rendimento {tenor}",
+                     f"{v:.3f}%" if v else "N/D",
+                     f"rif. {d}" if d else "non disponibile su FRED/ECB",
+                     "#0ea5e9" if v else "#94a3b8")
+            curve_vals.append(v)
+
+        # Grafico curva se almeno 2 punti disponibili
+        valid_pts = [(t, v) for t, v in zip(tenors, curve_vals) if v is not None]
+        if len(valid_pts) >= 2:
+            fig_cv = go.Figure()
+            fig_cv.add_trace(go.Scatter(
+                x=[p[0] for p in valid_pts],
+                y=[p[1] for p in valid_pts],
+                mode="lines+markers+text",
+                text=[f"{p[1]:.3f}%" for p in valid_pts],
+                textposition="top center",
+                line=dict(color="#0ea5e9", width=2),
+                marker=dict(size=8, color="#0ea5e9"),
+                name="Rendimento"
+            ))
+            # Inversione: linea rossa se 2Y > 10Y
+            v2 = curve.get("2Y", (None,))[0]
+            v10 = curve.get("10Y", (None,))[0]
+            if v2 and v10 and v2 > v10:
+                fig_cv.add_annotation(
+                    text="⚠️ Curva invertita (2Y > 10Y)",
+                    xref="paper", yref="paper", x=0.5, y=1.12,
+                    showarrow=False, font=dict(color="#ef4444", size=12)
+                )
+                fig_cv.update_traces(line_color="#ef4444", marker_color="#ef4444")
+            fig_cv.update_layout(
+                height=280, margin=dict(t=40,b=20,l=40,r=20),
+                plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                xaxis_title="Scadenza", yaxis_title="Rendimento (%)",
+                showlegend=False, font=dict(size=11),
+            )
+            st.plotly_chart(fig_cv, use_container_width=True)
+
+        # ── CDS SPREAD SOVRANO
+        section("CDS Spread Sovrano","🛡️")
+        cds_url = macro.get("cds_url", "https://www.worldgovernmentbonds.com/sovereign-cds/")
+        st.markdown(
+            f'<div style="background:#f1f5f9;border-radius:10px;padding:14px 18px;'
+            f'border-left:5px solid #6366f1;margin-bottom:12px;">'
+            f'<div style="font-size:10px;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:.08em;">CDS Spread Sovrano — {macro["paese"]}</div>'
+            f'<div style="font-size:13px;color:#0f172a;margin-top:6px;">'
+            f'I dati CDS vengono aggiornati in tempo reale da <strong>World Government Bonds</strong> '
+            f'e richiedono una pagina interattiva non scrapabile automaticamente.</div>'
+            f'<a href="{cds_url}" target="_blank" style="display:inline-block;margin-top:10px;'
+            f'background:#6366f1;color:white;font-size:12px;font-weight:600;padding:6px 14px;'
+            f'border-radius:6px;text-decoration:none;">🔗 Consulta CDS {macro["paese"]}</a>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
+
+        # ── ORO — valorizzazione al prezzo del trimestre precedente
+        section("Riserve Auree — Valorizzazione","🥇")
+        with st.spinner("Recupero prezzo oro trimestre precedente..."):
+            gold_price, gold_price_date, gold_q_label = get_gold_price_prev_quarter()
+
+        gold_t = macro.get("gold_t", 0)
+        gold_val_calc = calc_gold_value_usd(gold_t, gold_price) if gold_price else None
+
+        gc1, gc2, gc3 = st.columns(3)
+        with gc1:
+            card("Riserve Auree",
+                 f"{gold_t:,.2f} t",
+                 f"tonnellate metriche | rif. {macro.get('gold_ref','N/D')}",
+                 "#b45309")
+        with gc2:
+            card(f"Prezzo Oro ({gold_q_label or 'trim. prec.'})",
+                 f"${gold_price:,.2f}/oz" if gold_price else "N/D",
+                 f"Gold Fixing Price AM | rif. {gold_price_date or 'FRED'}",
+                 "#b45309")
+        with gc3:
+            card("Controvalore USD",
+                 f"{gold_val_calc:,.2f} MLD USD" if gold_val_calc else "N/D",
+                 f"tonnellate × {gold_price:,.0f} $/oz × 32.150 oz/t" if gold_price else "prezzo non disponibile",
+                 "#22c55e" if gold_val_calc else "#94a3b8")
+
+        if gold_val_calc and macro.get("gold_usd"):
+            delta = round(gold_val_calc - macro["gold_usd"], 2)
+            st.caption(f"ℹ️ Delta vs valore in libreria interna ({macro['gold_usd']} MLD USD): {delta:+.2f} MLD USD")
 
         # S4: Rendimento & Rischio
         section("Analisi Rendimento & Rischio","💹")
@@ -730,6 +1289,76 @@ with tab_gov:
             st.info("ℹ️ Inserisci tasso cedolare sopra per calcolare Rendimento, Duration e Convexity.")
 
         card("Tassazione applicata", f"{tax_rate:.1f}%", "12,5% gov. UE  |  26% corporate  |  modificabile sopra")
+
+        # ── SCENARIO ANALYSIS
+        if prezzo_f and dur_mod:
+            section("Scenario Analysis — Variazione Prezzo per Shift Tassi","📉")
+            st.caption("Stima la variazione del prezzo al variare dei tassi di interesse (shift parallelo della curva). Formula: ΔP/P ≈ −Duration × Δy + ½ × Convexity × Δy²")
+
+            col_sc1, col_sc2 = st.columns([2, 4])
+            with col_sc1:
+                custom_bp = st.number_input(
+                    "Aggiungi scenario personalizzato (bp)",
+                    min_value=-1000, max_value=1000, value=0, step=25,
+                    key="custom_bp",
+                    help="Inserisci uno shift personalizzato in basis points (es. +150 o -75)"
+                )
+            scenarios = [-300, -200, -100, -50, 0, +50, +100, +200, +300]
+            if custom_bp != 0 and custom_bp not in scenarios:
+                scenarios = sorted(set(scenarios + [custom_bp]))
+
+            scenario_rows = calc_scenario_table(prezzo_f, dur_mod, conv, scenarios)
+
+            if scenario_rows:
+                # Tabella heatmap
+                df_sc = pd.DataFrame(scenario_rows)
+                df_sc.columns = ["Shift (bp)", "Nuovo Prezzo", "ΔP (abs)", "ΔP (%)"]
+
+                def color_dp(val):
+                    try:
+                        v = float(val)
+                        if v > 2:    return "background-color:#dcfce7;color:#14532d"
+                        if v > 0:    return "background-color:#f0fdf4;color:#166534"
+                        if v == 0:   return "background-color:#f8fafc;color:#0f172a;font-weight:600"
+                        if v > -2:   return "background-color:#fff7ed;color:#7c2d12"
+                        return            "background-color:#fee2e2;color:#7f1d1d"
+                    except:
+                        return ""
+
+                styled = df_sc.style.applymap(color_dp, subset=["ΔP (%)"]).format({
+                    "Shift (bp)": lambda x: f"{x:+.0f} bp",
+                    "Nuovo Prezzo": "{:.4f}",
+                    "ΔP (abs)": "{:+.4f}",
+                    "ΔP (%)": "{:+.3f}%",
+                })
+                st.dataframe(styled, use_container_width=True, hide_index=True)
+
+                # Grafico Plotly
+                import plotly.graph_objects as go_sc
+                colors = ["#22c55e" if r["dp_pct"] > 0 else ("#94a3b8" if r["dp_pct"] == 0 else "#ef4444")
+                          for r in scenario_rows]
+                fig_sc = go_sc.Figure()
+                fig_sc.add_trace(go_sc.Bar(
+                    x=[f"{r['delta_bp']:+d} bp" for r in scenario_rows],
+                    y=[r["dp_pct"] for r in scenario_rows],
+                    marker_color=colors,
+                    text=[f"{r['dp_pct']:+.2f}%" for r in scenario_rows],
+                    textposition="outside",
+                    name="ΔP (%)"
+                ))
+                fig_sc.update_layout(
+                    title="Variazione % prezzo per shift parallelo della curva",
+                    xaxis_title="Shift tassi (bp)",
+                    yaxis_title="ΔP (%)",
+                    height=360,
+                    margin=dict(t=50, b=30, l=40, r=20),
+                    plot_bgcolor="rgba(0,0,0,0)",
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    showlegend=False,
+                    font=dict(size=11),
+                )
+                fig_sc.add_hline(y=0, line_dash="dash", line_color="#94a3b8", line_width=1)
+                st.plotly_chart(fig_sc, use_container_width=True)
 
         # S5: Riepilogo
         section("Riepilogo Scheda Completa","📄")
