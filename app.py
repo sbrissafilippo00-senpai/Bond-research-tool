@@ -241,14 +241,26 @@ FLAGS = {"DE":"🇩🇪","IT":"🇮🇹","ES":"🇪🇸","FR":"🇫🇷","NL":"�
 # ─────────────────────────────────────────────────────────────────
 @st.cache_data(ttl=900)
 def scrape_borsa_italiana(isin):
-    paths = [
-        f"https://www.borsaitaliana.it/borsa/obbligazioni/mot/btp/scheda/{isin}.html",
-        f"https://www.borsaitaliana.it/borsa/obbligazioni/mot/obbligazioni-in-euro/scheda/{isin}.html",
-        f"https://www.borsaitaliana.it/borsa/obbligazioni/mot/obbligazioni-in-altre-valute/scheda/{isin}.html",
-        f"https://www.borsaitaliana.it/borsa/obbligazioni/euromot/obbligazioni-euro/scheda/{isin}.html",
-        f"https://www.borsaitaliana.it/borsa/obbligazioni/euromot/obbligazioni-altre-valute/scheda/{isin}.html",
-        f"https://www.borsaitaliana.it/borsa/obbligazioni/extramot/scheda/{isin}.html",
-    ]
+    # Per ISIN XS (Eurobond): prova prima EuroMOT, poi MOT, poi ExtraMOT
+    # Per ISIN nazionali: prova prima MOT, poi EuroMOT
+    isin_prefix = isin[:2].upper() if len(isin) == 12 else ""
+    if isin_prefix == "XS":
+        paths = [
+            f"https://www.borsaitaliana.it/borsa/obbligazioni/euromot/obbligazioni-euro/scheda/{isin}.html",
+            f"https://www.borsaitaliana.it/borsa/obbligazioni/euromot/obbligazioni-altre-valute/scheda/{isin}.html",
+            f"https://www.borsaitaliana.it/borsa/obbligazioni/mot/obbligazioni-in-euro/scheda/{isin}.html",
+            f"https://www.borsaitaliana.it/borsa/obbligazioni/mot/obbligazioni-in-altre-valute/scheda/{isin}.html",
+            f"https://www.borsaitaliana.it/borsa/obbligazioni/extramot/scheda/{isin}.html",
+        ]
+    else:
+        paths = [
+            f"https://www.borsaitaliana.it/borsa/obbligazioni/mot/btp/scheda/{isin}.html",
+            f"https://www.borsaitaliana.it/borsa/obbligazioni/mot/obbligazioni-in-euro/scheda/{isin}.html",
+            f"https://www.borsaitaliana.it/borsa/obbligazioni/mot/obbligazioni-in-altre-valute/scheda/{isin}.html",
+            f"https://www.borsaitaliana.it/borsa/obbligazioni/euromot/obbligazioni-euro/scheda/{isin}.html",
+            f"https://www.borsaitaliana.it/borsa/obbligazioni/euromot/obbligazioni-altre-valute/scheda/{isin}.html",
+            f"https://www.borsaitaliana.it/borsa/obbligazioni/extramot/scheda/{isin}.html",
+        ]
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
         "Accept-Language": "it-IT,it;q=0.9,en;q=0.8",
@@ -961,7 +973,7 @@ with tab_gov:
         st.markdown("<br>", unsafe_allow_html=True)
         go_gov = st.button("🔍 Analizza", key="btn_gov", use_container_width=True, type="primary")
 
-    st.caption("Esempi: IT0005534141 (BTP 4,5% Ot53) · IT0005534984 (BTP) · DE0001102580 (Bund) · ES0000012B39 (Bonos) · FR0014004L86 (OAT)")
+    st.caption("Esempi gov. EUR: IT0005534141 (BTP) · DE0001102580 (Bund) · ES0000012B39 (Bonos) · FR0014004L86 (OAT)  |  Eurobond XS: XS2832668606 (Romania XS) · XS2692298962 (Poland XS)")
 
     if go_gov and isin_gov:
         if len(isin_gov) != 12 or not isin_gov[:2].isalpha() or not isin_gov[2:].isalnum():
@@ -971,11 +983,44 @@ with tab_gov:
         if prefix not in ISIN_MAP:
             st.error(f"Prefisso {prefix} non supportato."); st.stop()
         code = ISIN_MAP[prefix]
+
+        # ── Gestione ISIN XS (Eurobond internazionali)
+        # Il paese emittente non si deduce dall'ISIN → selettore manuale
+        # Coperti: Romania e Polonia (Eurobond in EUR su EuroMOT)
         if code is None:
-            st.warning("Prefisso XS = Eurobond. Identificazione paese manuale."); st.stop()
+            st.divider()
+            st.markdown(
+                '<div style="background:#fef3c7;border-left:5px solid #f59e0b;'
+                'border-radius:8px;padding:12px 16px;margin-bottom:12px;">'
+                '<strong>🌍 Eurobond XS rilevato</strong> — seleziona il paese emittente '
+                'per caricare i dati macro e procedere con l\'analisi.</div>',
+                unsafe_allow_html=True
+            )
+            xs_paese = st.selectbox(
+                "Paese emittente",
+                ["Romania", "Polonia"],
+                key="xs_paese",
+                help="Seleziona il paese che ha emesso questo Eurobond"
+            )
+            xs_go = st.button("✅ Conferma paese e analizza", key="xs_go", type="primary")
+            if not xs_go:
+                st.stop()
+            code = "RO" if xs_paese == "Romania" else "PL"
+            # Override: Eurobond XS sono sempre in EUR con tassazione 26%
+            xs_mode = True
+        else:
+            xs_mode = False
 
         macro = MACRO_DB[code]
         flag  = FLAGS.get(code,"🏳️")
+
+        # Per Eurobond XS: valuta sempre EUR, spread vs Bund calcolabile
+        if xs_mode:
+            macro = dict(macro)          # copia per non modificare il DB
+            macro["valuta"]    = "EUR"   # Eurobond sempre in EUR
+            macro["strumento"] = f"{macro['strumento']} Eurobond (XS)"
+            # Spread auto attivato: il rendimento è in EUR, confrontabile col Bund
+            macro["spread_auto"] = True
 
         with st.spinner("📡 Recupero dati..."):
             debt_v, debt_d = fred_latest(macro.get("fred_debt"))
@@ -1058,12 +1103,17 @@ with tab_gov:
 
         # Header
         st.divider()
+        tipo_label = "Governativo Sovrano — Eurobond (XS)" if xs_mode else "Governativo Sovrano"
+        badge_xs   = (' <span style="background:#fef3c7;color:#92400e;font-size:11px;'
+                      'font-weight:700;padding:2px 8px;border-radius:4px;'
+                      'border:1px solid #f59e0b;">EUROBOND XS</span>'
+                      if xs_mode else "")
         st.markdown(f"""
         <div style="background:#f1f5f9;border-radius:10px;padding:16px 22px;margin-bottom:20px;">
-        <div style="font-size:20px;font-weight:800;color:#0f172a;">{flag} {isin_gov}</div>
+        <div style="font-size:20px;font-weight:800;color:#0f172a;">{flag} {isin_gov}{badge_xs}</div>
         <div style="color:#475569;font-size:14px;margin-top:3px;">
         {bi.get("descrizione") or "—"} &nbsp;·&nbsp; {macro["paese"]} &nbsp;·&nbsp;
-        {divisa_f} &nbsp;·&nbsp; {bi.get("mercato") or "Borsa Italiana"} &nbsp;·&nbsp; Governativo Sovrano
+        {divisa_f} &nbsp;·&nbsp; {bi.get("mercato") or "EuroMOT"} &nbsp;·&nbsp; {tipo_label}
         </div></div>""", unsafe_allow_html=True)
 
         # S1: Dati Titolo
@@ -1300,8 +1350,11 @@ with tab_gov:
         section("Analisi Rendimento & Rischio","💹")
         col_tax, _ = st.columns([1,3])
         with col_tax:
+            # Eurobond XS → 26% (non beneficiano dell'aliquota agevolata 12,5%)
+            default_tax = 26.0 if xs_mode else 12.5
             tax_rate = st.number_input("Aliquota fiscale (%)", min_value=0.0, max_value=50.0,
-                value=12.5, step=0.5, help="12,5% gov. UE  |  26% corporate")
+                value=default_tax, step=0.5,
+                help="12,5% titoli di stato UE  |  26% Eurobond XS e corporate")
 
         rend_lordo = ytm
         rend_netto = round(ytm*(1.0-tax_rate/100.0),4) if ytm else None
@@ -1396,7 +1449,7 @@ with tab_gov:
         # S5: Riepilogo
         section("Riepilogo Scheda Completa","📄")
         recap = {
-            "Campo":["ISIN","Descrizione","Paese","Rating (S&P / Fitch)",
+            "Campo":["ISIN","Descrizione","Paese","Tipologia","Rating (S&P / Fitch)",
                      "Debito/PIL","Household Debt/PIL","Spread vs Bund",
                      "Prezzo di regolamento","Divisa","Taglio Minimo",
                      "Data Rimborso","Tasso cedolare","Periodicità cedola",
@@ -1404,6 +1457,7 @@ with tab_gov:
                      "Rend. Lordo","Rend. Netto","Tassazione applicata"],
             "Valore":[
                 isin_gov, bi.get("descrizione") or "—", macro["paese"],
+                "Governativo Sovrano — Eurobond (XS)" if xs_mode else "Governativo Sovrano",
                 f"{sp_r['v']} / {fi_r['v']}", f"{debt:.1f}%", f"{hh:.1f}%",
                 f"{bp:+.1f} bp" if bp is not None else "N/D",
                 f"{prezzo_f:.2f}" if prezzo_f else (bi.get("prezzo") or "N/D"),
