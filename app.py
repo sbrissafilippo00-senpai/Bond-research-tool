@@ -964,10 +964,16 @@ tab_gov, tab_corp = st.tabs(["🏛️  Governativi", "🏢  Corporate"])
 #  TAB GOVERNATIVI
 # ══════════════════════════════════════════════════════════════════
 with tab_gov:
+    # ── Session state: mantiene ISIN e paese XS tra i rerun di Streamlit
+    if "gov_isin" not in st.session_state:
+        st.session_state.gov_isin = ""
+    if "gov_run" not in st.session_state:
+        st.session_state.gov_run = False
+
     st.markdown("### Inserisci ISIN Governativo")
     c1, c2 = st.columns([4,1])
     with c1:
-        isin_gov = st.text_input("ISIN", key="isin_gov",
+        isin_input = st.text_input("ISIN", key="isin_gov",
             placeholder="es. IT0005534141", label_visibility="collapsed").strip().upper()
     with c2:
         st.markdown("<br>", unsafe_allow_html=True)
@@ -975,7 +981,15 @@ with tab_gov:
 
     st.caption("Esempi gov. EUR: IT0005534141 (BTP) · DE0001102580 (Bund) · ES0000012B39 (Bonos) · FR0014004L86 (OAT)  |  Eurobond XS: XS2832668606 (Romania XS) · XS2692298962 (Poland XS)")
 
-    if go_gov and isin_gov:
+    if go_gov and isin_input:
+        st.session_state.gov_isin = isin_input
+        st.session_state.gov_run  = True
+        # Reset conferma XS quando si analizza un nuovo ISIN
+        st.session_state.pop("gov_xs_confirmed", None)
+
+    isin_gov = st.session_state.gov_isin
+
+    if st.session_state.gov_run and isin_gov:
         if len(isin_gov) != 12 or not isin_gov[:2].isalpha() or not isin_gov[2:].isalnum():
             st.error("❌ ISIN non valido."); st.stop()
 
@@ -984,9 +998,7 @@ with tab_gov:
             st.error(f"Prefisso {prefix} non supportato."); st.stop()
         code = ISIN_MAP[prefix]
 
-        # ── Gestione ISIN XS (Eurobond internazionali)
-        # Il paese emittente non si deduce dall'ISIN → selettore manuale
-        # Coperti: Romania e Polonia (Eurobond in EUR su EuroMOT)
+        # ── Gestione ISIN XS
         if code is None:
             st.divider()
             st.markdown(
@@ -996,19 +1008,25 @@ with tab_gov:
                 'per caricare i dati macro e procedere con l\'analisi.</div>',
                 unsafe_allow_html=True
             )
-            xs_paese = st.selectbox(
+            xs_paese_sel = st.selectbox(
                 "Paese emittente",
                 ["Romania", "Polonia"],
-                key="xs_paese",
-                help="Seleziona il paese che ha emesso questo Eurobond"
+                key="xs_paese_sel",
+                help="Seleziona il paese che ha emesso questo Eurobond",
+                index=0 if st.session_state.get("gov_xs_paese","Romania")=="Romania" else 1,
             )
             xs_go = st.button("✅ Conferma paese e analizza", key="xs_go", type="primary")
-            if not xs_go:
+            if xs_go:
+                st.session_state.gov_xs_paese     = xs_paese_sel
+                st.session_state.gov_xs_confirmed = True
+                st.rerun()
+            if not st.session_state.get("gov_xs_confirmed", False):
                 st.stop()
-            code = "RO" if xs_paese == "Romania" else "PL"
-            # Override: Eurobond XS sono sempre in EUR con tassazione 26%
-            xs_mode = True
+            xs_paese = st.session_state.get("gov_xs_paese", "Romania")
+            code     = "RO" if xs_paese == "Romania" else "PL"
+            xs_mode  = True
         else:
+            st.session_state.pop("gov_xs_confirmed", None)
             xs_mode = False
 
         macro = MACRO_DB[code]
