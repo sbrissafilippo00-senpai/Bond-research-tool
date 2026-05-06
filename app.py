@@ -1220,123 +1220,54 @@ with tab_gov:
         # ── CURVA DEI TASSI
         section("Curva dei Tassi","📈")
 
-        with st.spinner("Recupero curva dei tassi..."):
-            curve = get_yield_curve(code)
+        # Mappa paese → slug WGB
+        WGB_COUNTRY = {
+            "DE":"germany","IT":"italy","ES":"spain","FR":"france",
+            "NL":"netherlands","PL":"poland","RO":"romania",
+        }
+        wgb_slug = WGB_COUNTRY.get(code, "")
+        wgb_url  = f"https://www.worldgovernmentbonds.com/country/{wgb_slug}/"
 
-        tenors  = ["3M", "2Y", "5Y", "10Y", "30Y"]
-        labels  = ["3 Mesi", "2 Anni", "5 Anni", "10 Anni", "30 Anni"]
-        cv_cols = st.columns(5)
-        curve_vals = []
-        last_update = None
+        # Recupera 10Y da FRED (unica serie affidabile per paese)
+        fred_10y_series = {
+            "DE":"IRLTLT01DEM156N","IT":"IRLTLT01ITM156N",
+            "ES":"IRLTLT01ESM156N","FR":"IRLTLT01FRM156N",
+            "NL":"IRLTLT01NLM156N","PL":"IRLTLT01PLM156N","RO":None,
+        }
+        with st.spinner("Recupero rendimento 10Y..."):
+            y10, d10 = fred_latest(fred_10y_series.get(code))
 
-        for i, (tenor, label) in enumerate(zip(tenors, labels)):
-            entry = curve.get(tenor, (None, None, "N/D"))
-            v    = entry[0] if len(entry) > 0 else None
-            d    = entry[1] if len(entry) > 1 else None
-            note = entry[2] if len(entry) > 2 else ""
-            if d and not last_update:
-                last_update = d
-            with cv_cols[i]:
-                card(f"{tenor}",
-                     f"{v:.3f}%" if v else "N/D",
-                     label,
-                     "#0ea5e9" if v else "#94a3b8")
-            curve_vals.append(v)
+        # Card 10Y da FRED
+        c10a, c10b, _ = st.columns([1, 1, 3])
+        with c10a:
+            card("Rendimento 10Y",
+                 f"{y10:.3f}%" if y10 else "N/D",
+                 f"rif. {d10}  |  FRED" if d10 else "FRED",
+                 "#0ea5e9" if y10 else "#94a3b8")
+        with c10b:
+            card("Spread vs Bund",
+                 f"{spread_bp_final:+.1f} bp" if spread_bp_final is not None else "N/D",
+                 "calcolato nella sezione sopra",
+                 spread_color(spread_bp_final) if spread_bp_final is not None else "#94a3b8")
 
-        if last_update:
-            src_note = "ECB AAA Euro Area + spread paese" if code in ("IT","ES","FR","NL") else (
-                       "ECB AAA Euro Area" if code == "DE" else "FRED")
-            st.caption(f"Fonte: {src_note}  |  Ultimo aggiornamento: {last_update}")
-
-        # Grafico curva professionale (stile World Government Bonds)
-        valid_pts = [(t, v) for t, v in zip(tenors, curve_vals) if v is not None]
-        if len(valid_pts) >= 2:
-            # Determina colore: normale=blu, invertita (3M o 2Y > 10Y)=rosso
-            v2  = curve.get("2Y",  (None,))[0]
-            v3m = curve.get("3M",  (None,))[0]
-            v10 = curve.get("10Y", (None,))[0]
-            inverted = bool(v2 and v10 and v2 > v10) or bool(v3m and v10 and v3m > v10)
-            line_color  = "#ef4444" if inverted else "#0ea5e9"
-            fill_color  = "rgba(239,68,68,0.08)" if inverted else "rgba(14,165,233,0.08)"
-
-            fig_cv = go.Figure()
-
-            # Area sotto la curva
-            fig_cv.add_trace(go.Scatter(
-                x=[p[0] for p in valid_pts],
-                y=[p[1] for p in valid_pts],
-                mode="none",
-                fill="tozeroy",
-                fillcolor=fill_color,
-                showlegend=False,
-                hoverinfo="skip",
-            ))
-
-            # Linea principale
-            fig_cv.add_trace(go.Scatter(
-                x=[p[0] for p in valid_pts],
-                y=[p[1] for p in valid_pts],
-                mode="lines+markers+text",
-                text=[f"{p[1]:.3f}%" for p in valid_pts],
-                textposition="top center",
-                textfont=dict(size=11, color=line_color),
-                line=dict(color=line_color, width=2.5),
-                marker=dict(size=7, color=line_color,
-                            line=dict(color="white", width=1.5)),
-                name=f"Yield curve {macro['paese']}",
-                hovertemplate="<b>%{x}</b><br>Rendimento: %{y:.3f}%<extra></extra>",
-            ))
-
-            # Annotazione inversione
-            if inverted:
-                fig_cv.add_annotation(
-                    text="⚠️ CURVA INVERTITA — segnale recessivo",
-                    xref="paper", yref="paper",
-                    x=0.5, y=1.08,
-                    showarrow=False,
-                    font=dict(color="#ef4444", size=12, family="sans-serif"),
-                    bgcolor="rgba(254,226,226,0.9)",
-                    bordercolor="#ef4444",
-                    borderwidth=1,
-                    borderpad=4,
-                )
-
-            fig_cv.update_layout(
-                title=dict(
-                    text=f"<b>{macro['paese'].upper()} YIELD CURVE</b>"
-                         f"<br><sup><i>{macro['strumento']} Government Bonds</i></sup>",
-                    x=0.5, xanchor="center",
-                    font=dict(size=15),
-                ),
-                height=360,
-                margin=dict(t=80, b=50, l=50, r=30),
-                plot_bgcolor="white",
-                paper_bgcolor="rgba(0,0,0,0)",
-                xaxis=dict(
-                    title="Scadenza (Residual Maturity)",
-                    showgrid=True,
-                    gridcolor="#f1f5f9",
-                    linecolor="#e2e8f0",
-                    tickfont=dict(size=11),
-                ),
-                yaxis=dict(
-                    title="Rendimento annualizzato (%)",
-                    showgrid=True,
-                    gridcolor="#f1f5f9",
-                    linecolor="#e2e8f0",
-                    tickformat=".2f",
-                    ticksuffix="%",
-                    tickfont=dict(size=11),
-                ),
-                showlegend=False,
-                hovermode="x unified",
-                font=dict(family="sans-serif"),
-            )
-            st.plotly_chart(fig_cv, use_container_width=True)
-        elif len(valid_pts) == 1:
-            st.info(f"ℹ️ Solo il dato 10Y disponibile per {macro['paese']} — dati multi-scadenza non disponibili su FRED/ECB.")
-        else:
-            st.warning(f"⚠️ Dati curva non disponibili per {macro['paese']}. Possibile causa: ECB/FRED irraggiungibili o paese non coperto.")
+        # Box link WGB per curva completa (3M/2Y/5Y/10Y/30Y)
+        st.markdown(
+            f'<div style="background:#f1f5f9;border-radius:10px;padding:14px 18px;'
+            f'border-left:5px solid #0ea5e9;margin-top:8px;">'
+            f'<div style="font-size:10px;color:#64748b;font-weight:700;text-transform:uppercase;'
+            f'letter-spacing:.08em;">Curva dei Tassi Completa — {macro["paese"]}</div>'
+            f'<div style="font-size:13px;color:#0f172a;margin-top:6px;">'
+            f'La curva multi-scadenza (3M · 2Y · 5Y · 10Y · 30Y) con dati in tempo reale,'
+            f' storico e analisi di inversione è disponibile su '
+            f'<strong>World Government Bonds</strong>.</div>'
+            f'<a href="{wgb_url}" target="_blank" '
+            f'style="display:inline-block;margin-top:10px;background:#0ea5e9;color:white;'
+            f'font-size:12px;font-weight:600;padding:6px 14px;border-radius:6px;'
+            f'text-decoration:none;">'
+            f'📈 Consulta Yield Curve — {macro["paese"]}</a>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
 
         # ── CDS SPREAD SOVRANO
         section("CDS Spread Sovrano","🛡️")
