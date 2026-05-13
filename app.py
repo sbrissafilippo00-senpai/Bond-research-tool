@@ -1500,6 +1500,217 @@ with tab_gov:
                    f"Dati titolo: Borsa Italiana  ·  Calcoli: tool interno  ·  "
                    f"Non costituisce consulenza finanziaria  ·  B-Adviser S.r.l.")
 
+        # ── PULSANTE "AGGIUNGI AL CONFRONTO"
+        st.divider()
+
+        # Inizializza lista confronto in session_state
+        if "confronto" not in st.session_state:
+            st.session_state.confronto = []
+
+        # Costruisci oggetto titolo corrente
+        titolo_corrente = {
+            "isin":         isin_gov,
+            "descrizione":  bi.get("descrizione") or isin_gov,
+            "paese":        macro["paese"],
+            "flag":         flag,
+            "cedola":       cedola_f,
+            "prezzo":       prezzo_f,
+            "scadenza":     format_date(scadenza_s),
+            "anni":         round(anni_f, 2) if anni_f else None,
+            "freq":         freq,
+            "ytm":          rend_lordo,
+            "rend_netto":   rend_netto,
+            "tax_rate":     tax_rate,
+            "dur_mod":      dur_mod,
+            "conv":         conv,
+            "spread_bp":    spread_bp_final,
+            "rating_sp":    sp_r["v"],
+            "rating_fi":    fi_r["v"],
+            "debt_pil":     debt,
+            "tipo":         "Eurobond XS" if xs_mode else "Governativo",
+        }
+
+        # Controlla se già in lista
+        isin_in_lista = any(t["isin"] == isin_gov for t in st.session_state.confronto)
+        lista_piena   = len(st.session_state.confronto) >= 3
+
+        ca1, ca2, ca3 = st.columns([2, 2, 4])
+        with ca1:
+            if isin_in_lista:
+                st.success(f"✅ {isin_gov} già nel confronto")
+            elif lista_piena:
+                st.warning("⚠️ Massimo 3 obbligazioni nel confronto")
+            else:
+                if st.button(f"➕ Aggiungi al confronto", key="add_confront", type="secondary"):
+                    st.session_state.confronto.append(titolo_corrente)
+                    st.rerun()
+        with ca2:
+            if st.session_state.confronto:
+                if st.button("🗑️ Svuota confronto", key="clear_confront"):
+                    st.session_state.confronto = []
+                    st.rerun()
+
+        if st.session_state.confronto:
+            n = len(st.session_state.confronto)
+            st.caption(f"Nel confronto: {n}/3 obbligazioni — "
+                       f"{', '.join(t['isin'] for t in st.session_state.confronto)}")
+
+    # ── SEZIONE CONFRONTO (appare sempre se ci sono >= 2 titoli)
+    if len(st.session_state.get("confronto", [])) >= 1:
+        st.divider()
+        lista = st.session_state.confronto
+
+        st.markdown(
+            '<div style="background:linear-gradient(135deg,#0f172a 0%,#1e3a5f 100%);'
+            'padding:16px 24px;border-radius:12px;margin-bottom:20px;">'
+            '<div style="font-size:18px;font-weight:800;color:white;">⚖️ Confronto Rendimenti</div>'
+            '<div style="font-size:12px;color:#93c5fd;margin-top:3px;">'
+            f'Analisi comparativa di {len(lista)} obbligazione{"" if len(lista)==1 else "i"}'
+            '</div></div>',
+            unsafe_allow_html=True
+        )
+
+        # ── Pulsanti rimozione singola
+        rem_cols = st.columns(len(lista) + 1)
+        for i, t in enumerate(lista):
+            with rem_cols[i]:
+                if st.button(f"✕ Rimuovi {t['isin']}", key=f"rem_{i}_{t['isin']}"):
+                    st.session_state.confronto.pop(i)
+                    st.rerun()
+
+        if len(lista) < 2:
+            st.info("ℹ️ Aggiungi almeno un'altra obbligazione per visualizzare il confronto.")
+        else:
+            # ── TABELLA COMPARATIVA
+            section("Tabella Comparativa", "📋")
+
+            # Costruisci colonne
+            campos = [
+                ("ISIN",               lambda t: t["isin"]),
+                ("Emittente",          lambda t: f"{t['flag']} {t['paese']}"),
+                ("Tipologia",          lambda t: t["tipo"]),
+                ("Rating (S&P/Fitch)", lambda t: f"{t['rating_sp']} / {t['rating_fi']}"),
+                ("Prezzo",             lambda t: f"{t['prezzo']:.2f}" if t["prezzo"] else "N/D"),
+                ("Cedola",             lambda t: f"{t['cedola']:.3f}%" if t["cedola"] else "N/D"),
+                ("Scadenza",           lambda t: t["scadenza"] or "N/D"),
+                ("Anni residui",       lambda t: f"{t['anni']:.2f}" if t["anni"] else "N/D"),
+                ("Rend. Lordo (YTM)",  lambda t: f"{t['ytm']:.3f}%" if t["ytm"] else "N/D"),
+                ("Aliquota",           lambda t: f"{t['tax_rate']:.1f}%"),
+                ("Rend. Netto",        lambda t: f"{t['rend_netto']:.3f}%" if t["rend_netto"] else "N/D"),
+                ("Duration Mod.",      lambda t: f"{t['dur_mod']:.3f}" if t["dur_mod"] else "N/D"),
+                ("Convexity",          lambda t: f"{t['conv']:.3f}" if t["conv"] else "N/D"),
+                ("Spread vs Bund",     lambda t: f"{t['spread_bp']:+.1f} bp" if t["spread_bp"] is not None else "N/D"),
+                ("Debito/PIL paese",   lambda t: f"{t['debt_pil']:.1f}%"),
+            ]
+
+            table_data = {"Campo": [c[0] for c in campos]}
+            for t in lista:
+                col_name = f"{t['flag']} {t['isin']}"
+                table_data[col_name] = [fn(t) for _, fn in campos]
+
+            df_conf = pd.DataFrame(table_data)
+
+            # Evidenzia riga rendimento lordo e netto
+            def highlight_rows(row):
+                styles = []
+                for _ in row:
+                    if row["Campo"] in ("Rend. Lordo (YTM)", "Rend. Netto"):
+                        styles.append("background-color:#f0fdf4;font-weight:600")
+                    elif row["Campo"] == "Spread vs Bund":
+                        styles.append("background-color:#f8fafc")
+                    else:
+                        styles.append("")
+                return styles
+
+            styled_conf = df_conf.style.apply(highlight_rows, axis=1)
+            st.dataframe(styled_conf, use_container_width=True, hide_index=True,
+                         height=min(len(campos) * 36 + 40, 560))
+
+            # ── GRAFICO RENDIMENTO LORDO vs NETTO
+            section("Rendimento Lordo vs Netto", "📊")
+
+            titoli_labels = [f"{t['flag']} {t['isin']} ({t['paese']})" for t in lista]
+            lordi  = [t["ytm"]       if t["ytm"]       else 0 for t in lista]
+            netti  = [t["rend_netto"] if t["rend_netto"] else 0 for t in lista]
+
+            fig_bar = go.Figure()
+            fig_bar.add_trace(go.Bar(
+                name="Rendimento Lordo",
+                x=titoli_labels,
+                y=lordi,
+                text=[f"{v:.3f}%" if v else "N/D" for v in lordi],
+                textposition="outside",
+                marker_color="#0ea5e9",
+                marker_line_color="#0284c7",
+                marker_line_width=0.5,
+            ))
+            fig_bar.add_trace(go.Bar(
+                name="Rendimento Netto",
+                x=titoli_labels,
+                y=netti,
+                text=[f"{v:.3f}%" if v else "N/D" for v in netti],
+                textposition="outside",
+                marker_color="#22c55e",
+                marker_line_color="#16a34a",
+                marker_line_width=0.5,
+            ))
+
+            # Aliquote label
+            for i, t in enumerate(lista):
+                if t["ytm"]:
+                    mid = (t["ytm"] + (t["rend_netto"] or 0)) / 2
+                    fig_bar.add_annotation(
+                        x=titoli_labels[i],
+                        y=mid,
+                        text=f"−{t['tax_rate']:.0f}%",
+                        showarrow=False,
+                        font=dict(size=10, color="#64748b"),
+                        xshift=30,
+                    )
+
+            fig_bar.update_layout(
+                barmode="group",
+                height=380,
+                margin=dict(t=40, b=60, l=50, r=30),
+                plot_bgcolor="white",
+                paper_bgcolor="rgba(0,0,0,0)",
+                yaxis=dict(
+                    title="Rendimento (%)",
+                    showgrid=True,
+                    gridcolor="#f1f5f9",
+                    ticksuffix="%",
+                    tickformat=".2f",
+                ),
+                xaxis=dict(showgrid=False),
+                legend=dict(
+                    orientation="h",
+                    yanchor="bottom", y=1.02,
+                    xanchor="right", x=1,
+                ),
+                font=dict(family="sans-serif", size=11),
+            )
+            st.plotly_chart(fig_bar, use_container_width=True)
+
+            # ── MIGLIORE RENDIMENTO
+            titoli_con_rend = [t for t in lista if t["ytm"]]
+            if titoli_con_rend:
+                best_lordo = max(titoli_con_rend, key=lambda t: t["ytm"])
+                best_netto = max(titoli_con_rend, key=lambda t: t["rend_netto"] or 0)
+                b1, b2 = st.columns(2)
+                with b1:
+                    card("Miglior Rendimento Lordo",
+                         f"{best_lordo['ytm']:.3f}%",
+                         f"{best_lordo['flag']} {best_lordo['isin']} — {best_lordo['paese']}",
+                         "#0ea5e9")
+                with b2:
+                    card("Miglior Rendimento Netto",
+                         f"{best_netto['rend_netto']:.3f}%",
+                         f"{best_netto['flag']} {best_netto['isin']} — {best_netto['paese']} (al netto del {best_netto['tax_rate']:.0f}%)",
+                         "#22c55e")
+
+            st.caption("⚠️ Il confronto usa i dati dell'ultima analisi eseguita per ogni titolo. "
+                       "Rendimenti calcolati dal tool (YTM). Non costituisce consulenza finanziaria.")
+
 
 # ══════════════════════════════════════════════════════════════════
 #  TAB CORPORATE
