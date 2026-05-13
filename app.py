@@ -958,7 +958,7 @@ B-Adviser S.r.l. | Analisi e Consulenza Finanziaria</div>
 </div>
 """, unsafe_allow_html=True)
 
-tab_gov, tab_corp = st.tabs(["🏛️  Governativi", "🏢  Corporate"])
+tab_gov, tab_corp, tab_conf = st.tabs(["🏛️  Governativi", "🏢  Corporate", "⚖️  Confronto"])
 
 # ══════════════════════════════════════════════════════════════════
 #  TAB GOVERNATIVI
@@ -1500,216 +1500,324 @@ with tab_gov:
                    f"Dati titolo: Borsa Italiana  ·  Calcoli: tool interno  ·  "
                    f"Non costituisce consulenza finanziaria  ·  B-Adviser S.r.l.")
 
-        # ── PULSANTE "AGGIUNGI AL CONFRONTO"
-        st.divider()
 
-        # Inizializza lista confronto in session_state
-        if "confronto" not in st.session_state:
-            st.session_state.confronto = []
 
-        # Costruisci oggetto titolo corrente
-        titolo_corrente = {
-            "isin":         isin_gov,
-            "descrizione":  bi.get("descrizione") or isin_gov,
-            "paese":        macro["paese"],
-            "flag":         flag,
-            "cedola":       cedola_f,
-            "prezzo":       prezzo_f,
-            "scadenza":     format_date(scadenza_s),
-            "anni":         round(anni_f, 2) if anni_f else None,
-            "freq":         freq,
-            "ytm":          rend_lordo,
-            "rend_netto":   rend_netto,
-            "tax_rate":     tax_rate,
-            "dur_mod":      dur_mod,
-            "conv":         conv,
-            "spread_bp":    spread_bp_final,
-            "rating_sp":    sp_r["v"],
-            "rating_fi":    fi_r["v"],
-            "debt_pil":     debt,
-            "tipo":         "Eurobond XS" if xs_mode else "Governativo",
-        }
 
-        # Controlla se già in lista
-        isin_in_lista = any(t["isin"] == isin_gov for t in st.session_state.confronto)
-        lista_piena   = len(st.session_state.confronto) >= 3
+# ══════════════════════════════════════════════════════════════════
+#  TAB CORPORATE
+# ══════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════
+#  TAB CONFRONTO
+# ══════════════════════════════════════════════════════════════════
+with tab_conf:
 
-        ca1, ca2, ca3 = st.columns([2, 2, 4])
-        with ca1:
-            if isin_in_lista:
-                st.success(f"✅ {isin_gov} già nel confronto")
-            elif lista_piena:
-                st.warning("⚠️ Massimo 3 obbligazioni nel confronto")
-            else:
-                if st.button(f"➕ Aggiungi al confronto", key="add_confront", type="secondary"):
-                    st.session_state.confronto.append(titolo_corrente)
-                    st.rerun()
-        with ca2:
-            if st.session_state.confronto:
-                if st.button("🗑️ Svuota confronto", key="clear_confront"):
-                    st.session_state.confronto = []
-                    st.rerun()
+    # Session state per lista confronto
+    if "confronto" not in st.session_state:
+        st.session_state.confronto = []
+    if "conf_run" not in st.session_state:
+        st.session_state.conf_run = False
 
-        if st.session_state.confronto:
-            n = len(st.session_state.confronto)
-            st.caption(f"Nel confronto: {n}/3 obbligazioni — "
-                       f"{', '.join(t['isin'] for t in st.session_state.confronto)}")
+    # ── HEADER
+    st.markdown("""
+    <div style="background:linear-gradient(135deg,#0f172a 0%,#1e3a5f 100%);
+    padding:24px 28px;border-radius:12px;margin-bottom:24px;">
+    <div style="font-size:22px;font-weight:800;color:white;">⚖️ Confronto Rendimenti</div>
+    <div style="font-size:13px;color:#93c5fd;margin-top:4px;">
+    Inserisci fino a 3 ISIN governativi per confrontarne i rendimenti</div>
+    </div>
+    """, unsafe_allow_html=True)
 
-    # ── SEZIONE CONFRONTO (appare sempre se ci sono >= 2 titoli)
-    if len(st.session_state.get("confronto", [])) >= 1:
-        st.divider()
-        lista = st.session_state.confronto
+    # ── 3 SLOT ISIN
+    st.markdown("### Inserisci gli ISIN da confrontare")
+    st.caption("Puoi confrontare obbligazioni di emittenti diversi — governativi e Eurobond XS")
 
+    slot_cols = st.columns(3)
+    slot_isins = []
+    slot_paesi = []
+
+    SLOT_CONFIG = [
+        {"label": "Obbligazione 1",  "placeholder": "es. IT0005534141",  "color": "#0ea5e9",
+         "hint": "BTP · Bund · OAT · Bonos · DSL · POLGB · ROMGB · XS"},
+        {"label": "Obbligazione 2",  "placeholder": "es. ES0000012B39",  "color": "#22c55e",
+         "hint": "BTP · Bund · OAT · Bonos · DSL · POLGB · ROMGB · XS"},
+        {"label": "Obbligazione 3",  "placeholder": "es. XS2832668606",  "color": "#f97316",
+         "hint": "Facoltativa — lascia vuoto per confrontare solo 2"},
+    ]
+
+    for i, (col, cfg) in enumerate(zip(slot_cols, SLOT_CONFIG)):
+        with col:
+            st.markdown(
+                f'<div style="border:1.5px solid {cfg["color"]}33;border-radius:10px;'
+                f'padding:14px 16px;margin-bottom:4px;">'
+                f'<div style="font-size:11px;font-weight:700;color:{cfg["color"]};'
+                f'text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px;">'
+                f'● {cfg["label"]}</div></div>',
+                unsafe_allow_html=True
+            )
+            isin_val = st.text_input(
+                cfg["label"], key=f"conf_isin_{i}",
+                placeholder=cfg["placeholder"],
+                label_visibility="collapsed",
+                help=cfg["hint"]
+            ).strip().upper()
+            slot_isins.append(isin_val)
+
+            # Selettore paese XS per slot
+            xs_paese_slot = None
+            if isin_val.startswith("XS") and len(isin_val) == 12:
+                xs_paese_slot = st.selectbox(
+                    "Paese emittente (XS)",
+                    ["Romania", "Polonia"],
+                    key=f"conf_xs_paese_{i}",
+                    help="Seleziona il paese emittente dell'Eurobond"
+                )
+            slot_paesi.append(xs_paese_slot)
+            st.caption(cfg["hint"])
+
+    # Conta ISIN validi inseriti
+    valid_isins = [(isin, slot_paesi[i]) for i, isin in enumerate(slot_isins)
+                   if isin and len(isin) == 12 and isin[:2].isalpha() and isin[2:].isalnum()]
+
+    st.divider()
+
+    # ── PULSANTE PROCEDI
+    n_valid = len(valid_isins)
+    if n_valid < 2:
+        st.info(f"ℹ️ Inserisci almeno 2 ISIN validi per procedere al confronto ({n_valid}/2 inseriti).")
+        procedi = False
+    else:
         st.markdown(
-            '<div style="background:linear-gradient(135deg,#0f172a 0%,#1e3a5f 100%);'
-            'padding:16px 24px;border-radius:12px;margin-bottom:20px;">'
-            '<div style="font-size:18px;font-weight:800;color:white;">⚖️ Confronto Rendimenti</div>'
-            '<div style="font-size:12px;color:#93c5fd;margin-top:3px;">'
-            f'Analisi comparativa di {len(lista)} obbligazione{"" if len(lista)==1 else "i"}'
-            '</div></div>',
-            unsafe_allow_html=True
+            f'<div style="text-align:center;margin:8px 0 16px;">' +
+            f'<span style="font-size:13px;color:#64748b;">{n_valid} obbligazioni pronte per il confronto</span>' +
+            f'</div>', unsafe_allow_html=True
         )
+        procedi = st.button(
+            f"🔍  Procedi al Confronto  ({n_valid} obbligazioni)",
+            key="btn_procedi_confronto",
+            type="primary",
+            use_container_width=True
+        )
+        if procedi:
+            st.session_state.conf_run    = True
+            st.session_state.conf_isins  = valid_isins
+            st.rerun()
 
-        # ── Pulsanti rimozione singola
-        rem_cols = st.columns(len(lista) + 1)
-        for i, t in enumerate(lista):
-            with rem_cols[i]:
-                if st.button(f"✕ Rimuovi {t['isin']}", key=f"rem_{i}_{t['isin']}"):
-                    st.session_state.confronto.pop(i)
-                    st.rerun()
+    # ── ANALISI E RISULTATI
+    if st.session_state.get("conf_run") and st.session_state.get("conf_isins"):
 
-        if len(lista) < 2:
-            st.info("ℹ️ Aggiungi almeno un'altra obbligazione per visualizzare il confronto.")
+        isins_to_run = st.session_state.conf_isins
+
+        # Pulsante reset
+        if st.button("↩️ Nuovo confronto", key="reset_conf"):
+            st.session_state.conf_run   = False
+            st.session_state.conf_isins = []
+            st.rerun()
+
+        risultati = []
+        SLOT_COLORS = ["#0ea5e9", "#22c55e", "#f97316"]
+
+        for idx, (isin, xs_paese_sel) in enumerate(isins_to_run):
+            prefix = isin[:2]
+
+            # Determina codice paese
+            if prefix not in ISIN_MAP:
+                st.warning(f"⚠️ ISIN {isin}: prefisso {prefix} non supportato — saltato.")
+                continue
+            code = ISIN_MAP[prefix]
+            if code is None:
+                if xs_paese_sel:
+                    code = "RO" if xs_paese_sel == "Romania" else "PL"
+                    xs_m = True
+                else:
+                    st.warning(f"⚠️ ISIN {isin}: Eurobond XS senza paese selezionato — saltato.")
+                    continue
+            else:
+                xs_m = False
+
+            macro_c = dict(MACRO_DB[code])
+            flag_c  = FLAGS.get(code, "🏳️")
+            if xs_m:
+                macro_c["valuta"]    = "EUR"
+                macro_c["strumento"] = f"{macro_c['strumento']} Eurobond (XS)"
+                macro_c["spread_auto"] = True
+
+            with st.spinner(f"Recupero dati {isin}..."):
+                debt_vc, _  = fred_latest(macro_c.get("fred_debt"))
+                hh_vc, _    = fred_latest(macro_c.get("fred_hh"))
+                bi_c        = scrape_borsa_italiana(isin)
+                sd_c        = get_spread_data(code, macro_c)
+
+            prezzo_c   = parse_float(bi_c.get("prezzo"))
+            cedola_c   = parse_float(bi_c.get("tasso_cedolare"))
+            scadenza_c = bi_c.get("data_rimborso") or bi_c.get("scadenza")
+            anni_c     = anni_alla_scadenza(scadenza_c)
+            divisa_c   = (bi_c.get("divisa") or macro_c["valuta"]).split("/")[0].strip()
+
+            periodo_r = (bi_c.get("periodicita") or "").lower()
+            freq_c = 4 if "trim" in periodo_r else (2 if "semi" in periodo_r else macro_c.get("freq_cedola", 1))
+
+            ytm_c    = calc_ytm(prezzo_c, cedola_c, anni_c, freq_c)
+            dur_c    = calc_duration_mod(prezzo_c, cedola_c, anni_c, ytm_c, freq_c)
+            conv_c   = calc_convexity(prezzo_c, cedola_c, anni_c, ytm_c, freq_c)
+            sp_c     = macro_c["sp"];   fi_c = macro_c["fitch"]
+            debt_c   = debt_vc if debt_vc else macro_c["debt_pil"]
+            spread_c = sd_c.get("spread_bp")
+
+            # Aliquota default
+            tax_c = 26.0 if xs_m else 12.5
+            rend_netto_c = round(ytm_c * (1 - tax_c / 100), 4) if ytm_c else None
+
+            risultati.append({
+                "isin":        isin,
+                "descrizione": bi_c.get("descrizione") or isin,
+                "paese":       macro_c["paese"],
+                "flag":        flag_c,
+                "tipo":        "Eurobond XS" if xs_m else "Governativo",
+                "cedola":      cedola_c,
+                "prezzo":      prezzo_c,
+                "scadenza":    format_date(scadenza_c),
+                "anni":        round(anni_c, 2) if anni_c else None,
+                "ytm":         ytm_c,
+                "tax_rate":    tax_c,
+                "rend_netto":  rend_netto_c,
+                "dur_mod":     dur_c,
+                "conv":        conv_c,
+                "spread_bp":   spread_c,
+                "rating_sp":   sp_c["v"],
+                "rating_fi":   fi_c["v"],
+                "debt_pil":    debt_c,
+                "color":       SLOT_COLORS[idx % 3],
+            })
+
+        if len(risultati) < 2:
+            st.error("Non è stato possibile recuperare abbastanza dati per il confronto.")
         else:
+            # ── HEADER RISULTATO
+            st.divider()
+            st.markdown(
+                f'<div style="background:#f1f5f9;border-radius:10px;padding:14px 20px;margin-bottom:20px;">' +
+                f'<div style="font-size:16px;font-weight:700;color:#0f172a;">'
+                f'Confronto di {len(risultati)} obbligazioni</div>' +
+                f'<div style="font-size:12px;color:#64748b;margin-top:3px;">' +
+                " &nbsp;·&nbsp; ".join(f'{r["flag"]} {r["isin"]}' for r in risultati) +
+                '</div></div>', unsafe_allow_html=True
+            )
+
+            # ── CARD RIEPILOGO PER SLOT
+            res_cols = st.columns(len(risultati))
+            for i, (rcol, r) in enumerate(zip(res_cols, risultati)):
+                with rcol:
+                    st.markdown(
+                        f'<div style="border-left:4px solid {r["color"]};'
+                        f'background:#f8fafc;border-radius:8px;padding:12px 14px;margin-bottom:6px;">' +
+                        f'<div style="font-size:10px;font-weight:700;color:{r["color"]};'
+                        f'text-transform:uppercase;">{r["flag"]} {r["paese"]} — {r["tipo"]}</div>' +
+                        f'<div style="font-size:16px;font-weight:800;color:#0f172a;margin:4px 0 2px;">{r["isin"]}</div>' +
+                        f'<div style="font-size:11px;color:#64748b;">{r["descrizione"]}</div>' +
+                        '</div>', unsafe_allow_html=True
+                    )
+                    card("Rend. Lordo",
+                         f'{r["ytm"]:.3f}%' if r["ytm"] else "N/D", "YTM",
+                         r["color"])
+                    card("Rend. Netto",
+                         f'{r["rend_netto"]:.3f}%' if r["rend_netto"] else "N/D",
+                         f'al netto {r["tax_rate"]:.0f}%',
+                         "#22c55e" if r["rend_netto"] else "#94a3b8")
+                    card("Spread vs Bund",
+                         f'{r["spread_bp"]:+.1f} bp' if r["spread_bp"] is not None else "N/D",
+                         "", spread_color(r["spread_bp"]))
+
             # ── TABELLA COMPARATIVA
-            section("Tabella Comparativa", "📋")
-
-            # Costruisci colonne
+            section("Tabella Comparativa Completa", "📋")
             campos = [
-                ("ISIN",               lambda t: t["isin"]),
-                ("Emittente",          lambda t: f"{t['flag']} {t['paese']}"),
-                ("Tipologia",          lambda t: t["tipo"]),
-                ("Rating (S&P/Fitch)", lambda t: f"{t['rating_sp']} / {t['rating_fi']}"),
-                ("Prezzo",             lambda t: f"{t['prezzo']:.2f}" if t["prezzo"] else "N/D"),
-                ("Cedola",             lambda t: f"{t['cedola']:.3f}%" if t["cedola"] else "N/D"),
-                ("Scadenza",           lambda t: t["scadenza"] or "N/D"),
-                ("Anni residui",       lambda t: f"{t['anni']:.2f}" if t["anni"] else "N/D"),
-                ("Rend. Lordo (YTM)",  lambda t: f"{t['ytm']:.3f}%" if t["ytm"] else "N/D"),
-                ("Aliquota",           lambda t: f"{t['tax_rate']:.1f}%"),
-                ("Rend. Netto",        lambda t: f"{t['rend_netto']:.3f}%" if t["rend_netto"] else "N/D"),
-                ("Duration Mod.",      lambda t: f"{t['dur_mod']:.3f}" if t["dur_mod"] else "N/D"),
-                ("Convexity",          lambda t: f"{t['conv']:.3f}" if t["conv"] else "N/D"),
-                ("Spread vs Bund",     lambda t: f"{t['spread_bp']:+.1f} bp" if t["spread_bp"] is not None else "N/D"),
-                ("Debito/PIL paese",   lambda t: f"{t['debt_pil']:.1f}%"),
+                ("ISIN",               lambda r: r["isin"]),
+                ("Emittente",          lambda r: f'{r["flag"]} {r["paese"]}'),
+                ("Tipologia",          lambda r: r["tipo"]),
+                ("Rating (S&P/Fitch)", lambda r: f'{r["rating_sp"]} / {r["rating_fi"]}'),
+                ("Prezzo",             lambda r: f'{r["prezzo"]:.2f}' if r["prezzo"] else "N/D"),
+                ("Cedola",             lambda r: f'{r["cedola"]:.3f}%' if r["cedola"] else "N/D"),
+                ("Scadenza",           lambda r: r["scadenza"] or "N/D"),
+                ("Anni residui",       lambda r: f'{r["anni"]:.2f}' if r["anni"] else "N/D"),
+                ("Rend. Lordo (YTM)",  lambda r: f'{r["ytm"]:.3f}%' if r["ytm"] else "N/D"),
+                ("Aliquota",           lambda r: f'{r["tax_rate"]:.1f}%'),
+                ("Rend. Netto",        lambda r: f'{r["rend_netto"]:.3f}%' if r["rend_netto"] else "N/D"),
+                ("Duration Mod.",      lambda r: f'{r["dur_mod"]:.3f}' if r["dur_mod"] else "N/D"),
+                ("Convexity",          lambda r: f'{r["conv"]:.3f}' if r["conv"] else "N/D"),
+                ("Spread vs Bund",     lambda r: f'{r["spread_bp"]:+.1f} bp' if r["spread_bp"] is not None else "N/D"),
+                ("Debito/PIL paese",   lambda r: f'{r["debt_pil"]:.1f}%'),
             ]
-
             table_data = {"Campo": [c[0] for c in campos]}
-            for t in lista:
-                col_name = f"{t['flag']} {t['isin']}"
-                table_data[col_name] = [fn(t) for _, fn in campos]
+            for r in risultati:
+                table_data[f'{r["flag"]} {r["isin"]}'] = [fn(r) for _, fn in campos]
+            df_cmp = pd.DataFrame(table_data)
 
-            df_conf = pd.DataFrame(table_data)
+            def highlight_rend(row):
+                return ["background-color:#f0fdf4;font-weight:600"
+                        if row["Campo"] in ("Rend. Lordo (YTM)", "Rend. Netto")
+                        else "" for _ in row]
 
-            # Evidenzia riga rendimento lordo e netto
-            def highlight_rows(row):
-                styles = []
-                for _ in row:
-                    if row["Campo"] in ("Rend. Lordo (YTM)", "Rend. Netto"):
-                        styles.append("background-color:#f0fdf4;font-weight:600")
-                    elif row["Campo"] == "Spread vs Bund":
-                        styles.append("background-color:#f8fafc")
-                    else:
-                        styles.append("")
-                return styles
-
-            styled_conf = df_conf.style.apply(highlight_rows, axis=1)
-            st.dataframe(styled_conf, use_container_width=True, hide_index=True,
+            st.dataframe(df_cmp.style.apply(highlight_rend, axis=1),
+                         use_container_width=True, hide_index=True,
                          height=min(len(campos) * 36 + 40, 560))
 
-            # ── GRAFICO RENDIMENTO LORDO vs NETTO
-            section("Rendimento Lordo vs Netto", "📊")
+            # ── GRAFICO LORDO vs NETTO
+            section("Grafico Rendimento Lordo vs Netto", "📊")
+            labels = [f'{r["flag"]} {r["isin"]}' for r in risultati]
+            lordi  = [r["ytm"] or 0       for r in risultati]
+            netti  = [r["rend_netto"] or 0 for r in risultati]
 
-            titoli_labels = [f"{t['flag']} {t['isin']} ({t['paese']})" for t in lista]
-            lordi  = [t["ytm"]       if t["ytm"]       else 0 for t in lista]
-            netti  = [t["rend_netto"] if t["rend_netto"] else 0 for t in lista]
-
-            fig_bar = go.Figure()
-            fig_bar.add_trace(go.Bar(
-                name="Rendimento Lordo",
-                x=titoli_labels,
-                y=lordi,
-                text=[f"{v:.3f}%" if v else "N/D" for v in lordi],
-                textposition="outside",
-                marker_color="#0ea5e9",
-                marker_line_color="#0284c7",
-                marker_line_width=0.5,
+            fig_cmp = go.Figure()
+            fig_cmp.add_trace(go.Bar(
+                name="Rendimento Lordo", x=labels, y=lordi,
+                text=[f'{v:.3f}%' for v in lordi], textposition="outside",
+                marker_color="#0ea5e9", marker_line_color="#0284c7", marker_line_width=0.5,
             ))
-            fig_bar.add_trace(go.Bar(
-                name="Rendimento Netto",
-                x=titoli_labels,
-                y=netti,
-                text=[f"{v:.3f}%" if v else "N/D" for v in netti],
-                textposition="outside",
-                marker_color="#22c55e",
-                marker_line_color="#16a34a",
-                marker_line_width=0.5,
+            fig_cmp.add_trace(go.Bar(
+                name="Rendimento Netto", x=labels, y=netti,
+                text=[f'{v:.3f}%' for v in netti], textposition="outside",
+                marker_color="#22c55e", marker_line_color="#16a34a", marker_line_width=0.5,
             ))
-
-            # Aliquote label
-            for i, t in enumerate(lista):
-                if t["ytm"]:
-                    mid = (t["ytm"] + (t["rend_netto"] or 0)) / 2
-                    fig_bar.add_annotation(
-                        x=titoli_labels[i],
-                        y=mid,
-                        text=f"−{t['tax_rate']:.0f}%",
-                        showarrow=False,
-                        font=dict(size=10, color="#64748b"),
-                        xshift=30,
+            for i, r in enumerate(risultati):
+                if r["ytm"] and r["rend_netto"]:
+                    fig_cmp.add_annotation(
+                        x=labels[i],
+                        y=(r["ytm"] + r["rend_netto"]) / 2,
+                        text=f'−{r["tax_rate"]:.0f}%',
+                        showarrow=False, font=dict(size=10, color="#64748b"), xshift=32,
                     )
-
-            fig_bar.update_layout(
-                barmode="group",
-                height=380,
+            fig_cmp.update_layout(
+                barmode="group", height=380,
                 margin=dict(t=40, b=60, l=50, r=30),
-                plot_bgcolor="white",
-                paper_bgcolor="rgba(0,0,0,0)",
-                yaxis=dict(
-                    title="Rendimento (%)",
-                    showgrid=True,
-                    gridcolor="#f1f5f9",
-                    ticksuffix="%",
-                    tickformat=".2f",
-                ),
+                plot_bgcolor="white", paper_bgcolor="rgba(0,0,0,0)",
+                yaxis=dict(title="Rendimento (%)", showgrid=True, gridcolor="#f1f5f9",
+                           ticksuffix="%", tickformat=".2f"),
                 xaxis=dict(showgrid=False),
-                legend=dict(
-                    orientation="h",
-                    yanchor="bottom", y=1.02,
-                    xanchor="right", x=1,
-                ),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
                 font=dict(family="sans-serif", size=11),
             )
-            st.plotly_chart(fig_bar, use_container_width=True)
+            st.plotly_chart(fig_cmp, use_container_width=True)
 
-            # ── MIGLIORE RENDIMENTO
-            titoli_con_rend = [t for t in lista if t["ytm"]]
-            if titoli_con_rend:
-                best_lordo = max(titoli_con_rend, key=lambda t: t["ytm"])
-                best_netto = max(titoli_con_rend, key=lambda t: t["rend_netto"] or 0)
-                b1, b2 = st.columns(2)
-                with b1:
+            # ── MIGLIORI
+            titoli_ok = [r for r in risultati if r["ytm"]]
+            if titoli_ok:
+                best_l = max(titoli_ok, key=lambda r: r["ytm"])
+                best_n = max(titoli_ok, key=lambda r: r["rend_netto"] or 0)
+                bm1, bm2 = st.columns(2)
+                with bm1:
                     card("Miglior Rendimento Lordo",
-                         f"{best_lordo['ytm']:.3f}%",
-                         f"{best_lordo['flag']} {best_lordo['isin']} — {best_lordo['paese']}",
+                         f'{best_l["ytm"]:.3f}%',
+                         f'{best_l["flag"]} {best_l["isin"]} — {best_l["paese"]}',
                          "#0ea5e9")
-                with b2:
+                with bm2:
                     card("Miglior Rendimento Netto",
-                         f"{best_netto['rend_netto']:.3f}%",
-                         f"{best_netto['flag']} {best_netto['isin']} — {best_netto['paese']} (al netto del {best_netto['tax_rate']:.0f}%)",
+                         f'{best_n["rend_netto"]:.3f}%',
+                         f'{best_n["flag"]} {best_n["isin"]} — al netto del {best_n["tax_rate"]:.0f}%',
                          "#22c55e")
 
-            st.caption("⚠️ Il confronto usa i dati dell'ultima analisi eseguita per ogni titolo. "
-                       "Rendimenti calcolati dal tool (YTM). Non costituisce consulenza finanziaria.")
+            st.divider()
+            st.caption("Rendimenti calcolati dal tool (YTM)  ·  "
+                       "Aliquota: 12,5% gov. UE, 26% Eurobond XS  ·  "
+                       "Non costituisce consulenza finanziaria  ·  B-Adviser S.r.l.")
 
 
 # ══════════════════════════════════════════════════════════════════
