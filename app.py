@@ -958,7 +958,7 @@ B-Adviser S.r.l. | Analisi e Consulenza Finanziaria</div>
 </div>
 """, unsafe_allow_html=True)
 
-tab_gov, tab_corp, tab_conf = st.tabs(["🏛️  Governativi", "🏢  Corporate", "⚖️  Confronto"])
+tab_gov, tab_corp, tab_conf, tab_port = st.tabs(["🏛️  Governativi", "🏢  Corporate", "⚖️  Confronto", "📦  Portafoglio"])
 
 # ══════════════════════════════════════════════════════════════════
 #  TAB GOVERNATIVI
@@ -1818,6 +1818,432 @@ with tab_conf:
             st.caption("Rendimenti calcolati dal tool (YTM)  ·  "
                        "Aliquota: 12,5% gov. UE, 26% Eurobond XS  ·  "
                        "Non costituisce consulenza finanziaria  ·  B-Adviser S.r.l.")
+
+
+# ══════════════════════════════════════════════════════════════════
+#  TAB CORPORATE
+# ══════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════
+#  TAB PORTAFOGLIO — Bond Laddering
+# ══════════════════════════════════════════════════════════════════
+with tab_port:
+
+    # ── Session state
+    for _k, _v in [("port_run", False), ("port_slots", []), ("port_risultati", [])]:
+        if _k not in st.session_state:
+            st.session_state[_k] = _v
+
+    # ── HEADER
+    st.markdown("""
+    <div style="background:linear-gradient(135deg,#0f172a 0%,#1e3a5f 100%);
+    padding:24px 28px;border-radius:12px;margin-bottom:24px;">
+    <div style="font-size:22px;font-weight:800;color:white;">📦 Costruttore di Portafoglio</div>
+    <div style="font-size:13px;color:#93c5fd;margin-top:4px;">
+    Inserisci fino a 5 obbligazioni con i pesi di allocazione — Bond Laddering</div>
+    </div>""", unsafe_allow_html=True)
+
+    st.markdown("### Inserisci le obbligazioni e i pesi")
+    st.caption("I pesi devono sommare esattamente 100%  ·  Max 5 obbligazioni  ·  Supporta governativi, Eurobond XS")
+
+    # ── SLOT CONFIG (5 slot)
+    PSLOT_COLORS   = ["#6366f1","#0ea5e9","#22c55e","#f97316","#ec4899"]
+    PSLOT_LABELS   = ["Bond 1","Bond 2","Bond 3","Bond 4","Bond 5"]
+    PSLOT_DEFAULTS = [40, 30, 20, 10, 0]
+    PSLOT_EXAMPLES = ["IT0005534141","DE0001102580","ES0000012B39","FR0014004L86","XS2832668606"]
+
+    port_isins  = []
+    port_pesi   = []
+    port_paesi  = []
+
+    for i in range(5):
+        col_label, col_isin, col_peso, col_xs = st.columns([1, 3, 1.2, 1.8])
+
+        with col_label:
+            st.markdown(
+                f'<div style="border-left:4px solid {PSLOT_COLORS[i]};'
+                f'padding:8px 10px;border-radius:0 6px 6px 0;background:#f8fafc;'
+                f'margin-top:28px;font-size:13px;font-weight:700;color:{PSLOT_COLORS[i]};">'
+                f'{PSLOT_LABELS[i]}</div>', unsafe_allow_html=True)
+
+        with col_isin:
+            isin_p = st.text_input(
+                f"ISIN {PSLOT_LABELS[i]}", key=f"port_isin_{i}",
+                placeholder=PSLOT_EXAMPLES[i],
+                label_visibility="visible"
+            ).strip().upper()
+
+        with col_peso:
+            peso_p = st.number_input(
+                "Peso (%)", key=f"port_peso_{i}",
+                min_value=0.0, max_value=100.0,
+                value=float(PSLOT_DEFAULTS[i]), step=0.5, format="%.1f"
+            )
+
+        with col_xs:
+            xs_paese_p = None
+            if isin_p.startswith("XS") and len(isin_p) == 12:
+                xs_paese_p = st.selectbox(
+                    "Paese XS", ["Romania","Polonia"],
+                    key=f"port_xs_{i}"
+                )
+            else:
+                st.markdown("<div style='margin-top:28px;'></div>", unsafe_allow_html=True)
+
+        port_isins.append(isin_p)
+        port_pesi.append(peso_p)
+        port_paesi.append(xs_paese_p)
+
+    # ── CONTROLLO PESI
+    slot_attivi = [(port_isins[i], port_pesi[i], port_paesi[i])
+                   for i in range(5)
+                   if port_isins[i] and len(port_isins[i])==12
+                   and port_isins[i][:2].isalpha() and port_isins[i][2:].isalnum()
+                   and port_pesi[i] > 0]
+
+    totale_pesi = sum(p for _, p, _ in slot_attivi)
+    n_attivi    = len(slot_attivi)
+
+    st.divider()
+    pw1, pw2, pw3 = st.columns([2, 2, 4])
+    with pw1:
+        delta_pesi = round(totale_pesi - 100.0, 1)
+        if n_attivi == 0:
+            st.info("Inserisci almeno 2 obbligazioni con peso > 0")
+        elif abs(delta_pesi) < 0.1:
+            st.success(f"✅ Pesi corretti: {totale_pesi:.1f}%")
+        else:
+            st.error(f"❌ Totale pesi: {totale_pesi:.1f}% (mancano {-delta_pesi:+.1f}%)")
+    with pw2:
+        if n_attivi > 0:
+            st.metric("Bond attivi", f"{n_attivi}/5",
+                      f"Totale pesi: {totale_pesi:.1f}%")
+
+    # ── BARRA PESI VISIVA
+    if n_attivi > 0:
+        bar_html = '<div style="display:flex;border-radius:8px;overflow:hidden;height:28px;margin:8px 0 4px;">' 
+        for i in range(5):
+            if port_isins[i] and port_pesi[i] > 0 and len(port_isins[i])==12:
+                pct = port_pesi[i]
+                bar_html += (f'<div style="width:{pct}%;background:{PSLOT_COLORS[i]};'
+                             f'display:flex;align-items:center;justify-content:center;'
+                             f'font-size:11px;font-weight:700;color:white;'
+                             f'min-width:30px;overflow:hidden;">{pct:.0f}%</div>')
+        bar_html += '</div>'
+        st.markdown(bar_html, unsafe_allow_html=True)
+
+    # ── PULSANTE COSTRUISCI
+    pesi_ok = n_attivi >= 2 and abs(delta_pesi) < 0.1
+    if pesi_ok:
+        st.markdown("<br>", unsafe_allow_html=True)
+        if st.button("📦  Costruisci Portafoglio", key="btn_build_port",
+                     type="primary", use_container_width=True):
+            st.session_state.port_slots    = slot_attivi
+            st.session_state.port_run      = True
+            st.session_state.port_risultati = []
+            st.rerun()
+    elif n_attivi >= 2:
+        st.warning("Correggi i pesi prima di procedere (devono sommare 100%)")
+
+    # ══════════════════════════════════════════════════════════════
+    #  RISULTATI PORTAFOGLIO
+    # ══════════════════════════════════════════════════════════════
+    if st.session_state.port_run and st.session_state.port_slots:
+
+        if st.button("↩️ Modifica portafoglio", key="reset_port"):
+            st.session_state.port_run = False
+            st.rerun()
+
+        slots = st.session_state.port_slots
+
+        # ── Fetch dati per ogni bond
+        if not st.session_state.port_risultati:
+            bonds = []
+            for isin_p, peso_p, xs_paese_p in slots:
+                prefix = isin_p[:2]
+                if prefix not in ISIN_MAP:
+                    st.warning(f"⚠️ {isin_p}: prefisso non supportato — saltato"); continue
+                code_p = ISIN_MAP[prefix]
+                xs_mp  = False
+                if code_p is None:
+                    if xs_paese_p:
+                        code_p = "RO" if xs_paese_p == "Romania" else "PL"
+                        xs_mp  = True
+                    else:
+                        st.warning(f"⚠️ {isin_p}: XS senza paese — saltato"); continue
+                macro_p = dict(MACRO_DB[code_p])
+                if xs_mp:
+                    macro_p["valuta"] = "EUR"
+                    macro_p["spread_auto"] = True
+                    macro_p["freq_cedola"] = 1
+                flag_p  = FLAGS.get(code_p, "🏳️")
+
+                with st.spinner(f"Recupero {isin_p} ({peso_p:.0f}%)..."):
+                    bi_p      = scrape_borsa_italiana(isin_p)
+                    sd_p      = get_spread_data(code_p, macro_p)
+
+                prezzo_p   = parse_float(bi_p.get("prezzo"))
+                cedola_p   = parse_float(bi_p.get("tasso_cedolare"))
+                scadenza_p = bi_p.get("data_rimborso") or bi_p.get("scadenza")
+                anni_p     = anni_alla_scadenza(scadenza_p)
+                periodo_pr = (bi_p.get("periodicita") or "").lower()
+                freq_p = (4 if "trim" in periodo_pr else
+                          2 if "semi" in periodo_pr else
+                          macro_p.get("freq_cedola", 1))
+
+                ytm_p   = calc_ytm(prezzo_p, cedola_p, anni_p, freq_p)
+                dur_p   = calc_duration_mod(prezzo_p, cedola_p, anni_p, ytm_p, freq_p)
+                conv_p  = calc_convexity(prezzo_p, cedola_p, anni_p, ytm_p, freq_p)
+                tax_p   = 26.0 if xs_mp else 12.5
+                rn_p    = round(ytm_p*(1-tax_p/100),4) if ytm_p else None
+                sp_p    = sd_p.get("spread_bp")
+
+                bonds.append({
+                    "isin":       isin_p,
+                    "desc":       bi_p.get("descrizione") or isin_p,
+                    "paese":      macro_p["paese"],
+                    "flag":       flag_p,
+                    "peso":       peso_p / 100.0,
+                    "peso_pct":   peso_p,
+                    "cedola":     cedola_p,
+                    "freq":       freq_p,
+                    "prezzo":     prezzo_p,
+                    "scadenza":   format_date(scadenza_p),
+                    "scadenza_raw": scadenza_p,
+                    "anni":       anni_p,
+                    "ytm":        ytm_p,
+                    "tax":        tax_p,
+                    "rn":         rn_p,
+                    "dur":        dur_p,
+                    "conv":       conv_p,
+                    "spread":     sp_p,
+                    "rating":     macro_p["sp"]["v"],
+                    "tipo":       "Eurobond XS" if xs_mp else "Governativo",
+                })
+            st.session_state.port_risultati = bonds
+
+        bonds = st.session_state.port_risultati
+        if not bonds:
+            st.error("Nessun dato disponibile."); st.stop()
+
+        # ── METRICHE AGGREGATE PORTAFOGLIO
+        def port_metric(field, bonds):
+            """Media ponderata per peso."""
+            vals = [(b["peso"], b.get(field)) for b in bonds if b.get(field) is not None]
+            if not vals: return None
+            tot_w = sum(w for w,_ in vals)
+            return sum(w*v for w,v in vals) / tot_w if tot_w > 0 else None
+
+        # Spread ponderato per duration
+        def spread_dur_weighted(bonds):
+            num = sum(b["peso"] * (b["dur"] or 0) * (b["spread"] or 0)
+                      for b in bonds if b["dur"] and b["spread"] is not None)
+            den = sum(b["peso"] * (b["dur"] or 0) for b in bonds if b["dur"])
+            return round(num/den, 1) if den > 0 else None
+
+        p_anni  = port_metric("anni",  bonds)
+        p_dur   = port_metric("dur",   bonds)
+        p_conv  = port_metric("conv",  bonds)
+        p_ytm   = port_metric("ytm",   bonds)
+        p_rn    = port_metric("rn",    bonds)
+        p_sp    = spread_dur_weighted(bonds)
+
+        # ── HEADER PORTAFOGLIO
+        st.divider()
+        st.markdown("""
+        <div style="background:linear-gradient(135deg,#0f172a 0%,#1e3a5f 100%);
+        padding:18px 24px;border-radius:12px;margin-bottom:20px;">
+        <div style="font-size:18px;font-weight:800;color:white;">📦 Analisi Portafoglio</div>
+        <div style="font-size:12px;color:#93c5fd;margin-top:3px;">
+        Metriche aggregate ponderate per peso di allocazione</div>
+        </div>""", unsafe_allow_html=True)
+
+        # Barra composizione
+        bar2 = '<div style="display:flex;border-radius:8px;overflow:hidden;height:32px;margin-bottom:16px;">'
+        for i, b in enumerate(bonds):
+            bar2 += (f'<div style="width:{b["peso_pct"]:.1f}%;background:{PSLOT_COLORS[i%5]};'
+                     f'display:flex;align-items:center;justify-content:center;'
+                     f'font-size:10px;font-weight:700;color:white;overflow:hidden;'
+                     f'min-width:40px;" title="{b['isin']} {b['peso_pct']:.1f}%">'
+                     f'{b["isin"][:6]}...<br>{b["peso_pct"]:.0f}%</div>')
+        bar2 += '</div>'
+        st.markdown(bar2, unsafe_allow_html=True)
+
+        # ── 6 CARD METRICHE PORTAFOGLIO
+        section("Metriche del Portafoglio", "📊")
+        pm1, pm2, pm3 = st.columns(3)
+        pm4, pm5, pm6 = st.columns(3)
+        with pm1:
+            card("Anni Residui Medi",
+                 f"{p_anni:.2f} anni" if p_anni else "N/D",
+                 "media ponderata per peso", "#6366f1")
+        with pm2:
+            card("Duration Modificata",
+                 f"{p_dur:.4f}" if p_dur else "N/D",
+                 "sensibilità portafoglio ai tassi", "#6366f1")
+        with pm3:
+            card("Convexity",
+                 f"{p_conv:.4f}" if p_conv else "N/D",
+                 "curvatura prezzo/rendimento", "#6366f1")
+        with pm4:
+            card("Rendimento Lordo",
+                 f"{p_ytm:.3f}%" if p_ytm else "N/D",
+                 "YTM ponderato per peso", "#0ea5e9")
+        with pm5:
+            card("Rendimento Netto",
+                 f"{p_rn:.3f}%" if p_rn else "N/D",
+                 "al netto delle aliquote ponderate", "#22c55e")
+        with pm6:
+            card("Spread vs Bund",
+                 f"{p_sp:+.1f} bp" if p_sp is not None else "N/D",
+                 "ponderato per peso × duration", spread_color(p_sp) if p_sp else "#94a3b8")
+
+        # ── COMPOSIZIONE DETTAGLIATA
+        section("Composizione del Portafoglio", "📋")
+        comp_data = {
+            "Bond":       [f"{b['flag']} {b['isin']}" for b in bonds],
+            "Paese":      [b["paese"]                  for b in bonds],
+            "Peso":       [f"{b['peso_pct']:.1f}%"     for b in bonds],
+            "Cedola":     [f"{b['cedola']:.3f}%" if b["cedola"] else "N/D" for b in bonds],
+            "Scadenza":   [b["scadenza"] or "N/D"       for b in bonds],
+            "Anni":       [f"{b['anni']:.2f}" if b["anni"] else "N/D" for b in bonds],
+            "YTM":        [f"{b['ytm']:.3f}%" if b["ytm"] else "N/D" for b in bonds],
+            "Rend. Netto":[f"{b['rn']:.3f}%" if b["rn"] else "N/D" for b in bonds],
+            "Duration":   [f"{b['dur']:.3f}" if b["dur"] else "N/D" for b in bonds],
+            "Spread":     [f"{b['spread']:+.1f} bp" if b["spread"] is not None else "N/D" for b in bonds],
+            "Rating":     [b["rating"]                 for b in bonds],
+        }
+        st.dataframe(pd.DataFrame(comp_data), use_container_width=True, hide_index=True)
+
+        # ── CALENDARIO CEDOLE (prossimi 12 mesi)
+        section("Calendario Flussi Cedolari — Prossimi 12 Mesi", "📅")
+        st.caption("Flussi cedolari stimati per ogni mese (cedola annua × peso allocazione × 100)")
+
+        from datetime import date, timedelta
+        import calendar as _cal
+
+        oggi       = date.today()
+        fine_anno  = date(oggi.year + 1, oggi.month, oggi.day)
+
+        # Costruisci mappa mese → lista flussi
+        # Struttura: {(anno, mese): [(isin, importo_cedola_ponderato, colore)]}
+        flussi_mese = {}
+
+        for i, b in enumerate(bonds):
+            if not b["cedola"] or not b["scadenza_raw"]:
+                continue
+            scad_d = parse_date(b["scadenza_raw"])
+            if not scad_d:
+                continue
+            freq    = b["freq"]
+            cedola_annua = b["cedola"]   # % annua
+            # Importo per 100 nominale, ponderato per peso
+            flusso_periodo = (cedola_annua / freq) * b["peso"]
+
+            # Calcola mesi di stacco cedola nel prossimo anno
+            # La periodicità determina i mesi: partendo da scadenza, a ritroso
+            scad_mese  = scad_d.month
+            scad_giorno = min(scad_d.day, 28)
+
+            # Genera le date di stacco nei prossimi 12 mesi
+            mesi_stacco = []
+            for mese_offset in range(0, 13 * (12 // freq), 12 // freq):
+                # Mesi di stacco relativi alla scadenza
+                pass
+
+            # Approccio diretto: genera date cedola per tutto il prossimo anno
+            stacco_dates = []
+            periodi_per_anno = freq
+            mesi_per_periodo = 12 // periodi_per_anno
+
+            # Parti dalla data più vicina nel passato e vai avanti
+            dt = scad_d
+            # Vai indietro abbastanza
+            while dt > oggi - timedelta(days=400):
+                dt = date(dt.year, dt.month, min(scad_giorno, _cal.monthrange(dt.year, dt.month)[1]))
+                month_back = dt.month - mesi_per_periodo
+                year_back  = dt.year
+                if month_back <= 0:
+                    month_back += 12
+                    year_back  -= 1
+                dt = date(year_back, month_back, min(scad_giorno, _cal.monthrange(year_back, month_back)[1]))
+
+            # Ora avanza fino alla fine del periodo di analisi
+            for _ in range(periodi_per_anno * 2 + 2):
+                month_next = dt.month + mesi_per_periodo
+                year_next  = dt.year
+                while month_next > 12:
+                    month_next -= 12
+                    year_next  += 1
+                dt = date(year_next, month_next,
+                          min(scad_giorno, _cal.monthrange(year_next, month_next)[1]))
+                if oggi <= dt <= fine_anno:
+                    stacco_dates.append(dt)
+                if dt > fine_anno:
+                    break
+
+            for sd_date in stacco_dates:
+                key = (sd_date.year, sd_date.month)
+                if key not in flussi_mese:
+                    flussi_mese[key] = []
+                flussi_mese[key].append({
+                    "isin":    b["isin"],
+                    "flag":    b["flag"],
+                    "importo": round(flusso_periodo, 4),
+                    "color":   PSLOT_COLORS[i % 5],
+                    "data":    sd_date.strftime("%d/%m/%Y"),
+                })
+
+        # Costruisci griglia calendario 12 mesi
+        mesi_it = ["Gen","Feb","Mar","Apr","Mag","Giu",
+                   "Lug","Ago","Set","Ott","Nov","Dic"]
+
+        # Genera lista ordinata dei 12 mesi da oggi
+        mesi_range = []
+        for delta_m in range(13):
+            m = (oggi.month - 1 + delta_m) % 12
+            y = oggi.year + (oggi.month - 1 + delta_m) // 12
+            mesi_range.append((y, m + 1))
+        mesi_range = mesi_range[:12]
+
+        # Visualizza in griglia 4×3
+        rows_cal = [mesi_range[i:i+4] for i in range(0, 12, 4)]
+
+        for row_mesi in rows_cal:
+            row_cols = st.columns(4)
+            for col_idx, (anno, mese) in enumerate(row_mesi):
+                with row_cols[col_idx]:
+                    flussi = flussi_mese.get((anno, mese), [])
+                    totale_mese = sum(f["importo"] for f in flussi)
+                    bg = "#f0fdf4" if flussi else "#f8fafc"
+                    border = "#22c55e" if flussi else "#e2e8f0"
+
+                    html = (f'<div style="border:1.5px solid {border};border-radius:8px;'
+                            f'background:{bg};padding:10px 12px;min-height:90px;">'
+                            f'<div style="font-size:12px;font-weight:700;color:#0f172a;margin-bottom:6px;">'
+                            f'{mesi_it[mese-1]} {anno}</div>')
+
+                    if flussi:
+                        for f in flussi:
+                            html += (f'<div style="font-size:10px;color:{f["color"]};'
+                                     f'font-weight:600;margin-bottom:2px;">'
+                                     f'● {f["flag"]} {f["isin"][:10]}</div>'
+                                     f'<div style="font-size:10px;color:#64748b;margin-bottom:4px;">'
+                                     f'{f["data"]}  +{f["importo"]:.3f}%</div>')
+                        html += (f'<div style="border-top:1px solid {border};margin-top:4px;'
+                                 f'padding-top:4px;font-size:11px;font-weight:700;color:#22c55e;">'
+                                 f'Tot: +{totale_mese:.3f}%</div>')
+                    else:
+                        html += '<div style="font-size:11px;color:#94a3b8;margin-top:12px;">—</div>'
+
+                    html += '</div>'
+                    st.markdown(html, unsafe_allow_html=True)
+
+        st.caption("Flussi espressi come % sul nominale, ponderati per peso di allocazione. "
+                   "Date stimate dalla scadenza e dalla periodicità cedola.")
+        st.divider()
+        st.caption("Metriche aggregate calcolate come media ponderata per peso  ·  "
+                   "Spread ponderato per peso × Duration  ·  "
+                   "Non costituisce consulenza finanziaria  ·  B-Adviser S.r.l.")
 
 
 # ══════════════════════════════════════════════════════════════════
